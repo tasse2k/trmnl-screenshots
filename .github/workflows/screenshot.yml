@@ -57,8 +57,11 @@ jobs:
             viewport: { width: 800, height: 480 }
           });
           
+          // Set desktop user agent for proper font loading
+          await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+          
           // Set longer timeout for font loading
-          page.setDefaultTimeout(60000);
+          page.setDefaultTimeout(90000);
           
           try {
             const url = process.env.SCREENSHOT_URL || 'https://example.com';
@@ -66,31 +69,89 @@ jobs:
             
             await page.goto(url, { 
               waitUntil: 'networkidle',
-              timeout: 60000 
+              timeout: 90000 
             });
             
-            // Wait for fonts to load
-            await page.evaluate(() => {
-              return document.fonts.ready;
+            // Wait for fonts to load completely
+            await page.evaluate(async () => {
+              console.log('Starting font loading...');
+              
+              // Wait for document fonts
+              await document.fonts.ready;
+              console.log('Document fonts ready');
+              
+              // Wait for any @font-face fonts to load
+              const fontFaces = Array.from(document.fonts);
+              console.log(`Found ${fontFaces.length} font faces`);
+              
+              await Promise.all(fontFaces.map(async (font) => {
+                try {
+                  await font.loaded;
+                  console.log(`Font loaded: ${font.family}`);
+                } catch (e) {
+                  console.log(`Font failed to load: ${font.family}`, e);
+                }
+              }));
+              
+              // Force load common fonts
+              const testFonts = ['Inter', 'Roboto', 'Arial', 'sans-serif'];
+              for (const fontFamily of testFonts) {
+                try {
+                  await document.fonts.load(`16px "${fontFamily}"`);
+                  console.log(`Loaded font: ${fontFamily}`);
+                } catch (e) {
+                  console.log(`Could not load: ${fontFamily}`);
+                }
+              }
+              
+              // Additional check for web fonts
+              return new Promise((resolve) => {
+                if (document.fonts.status === 'loaded') {
+                  console.log('All fonts loaded successfully');
+                  resolve();
+                } else {
+                  document.fonts.addEventListener('loadingdone', () => {
+                    console.log('Font loading done event fired');
+                    resolve();
+                  });
+                  // Fallback timeout
+                  setTimeout(() => {
+                    console.log('Font loading timeout reached');
+                    resolve();
+                  }, 15000);
+                }
+              });
             });
             
             // Additional wait to ensure everything is rendered
-            await page.waitForTimeout(5000);
+            await page.waitForTimeout(8000);
             
-            // Take screenshot
+            // Take screenshot with high quality
             const screenshot = await page.screenshot({
               type: 'png',
-              fullPage: false
+              fullPage: false,
+              clip: { x: 0, y: 0, width: 800, height: 480 }
             });
             
-            // Convert to 1-bit PNG (pure black and white)
+            // Convert to optimized 1-bit PNG for TRMNL
             await sharp(screenshot)
+              .resize(800, 480, { 
+                kernel: sharp.kernel.lanczos3,
+                fit: 'contain',
+                background: { r: 255, g: 255, b: 255, alpha: 1 }
+              })
+              .gamma(1.2)  // Adjust gamma for better contrast
+              .sharpen({ sigma: 0.5, m1: 1, m2: 2 })  // Sharpen text
+              .threshold(140, { 
+                greyscale: true,
+                colourSpace: 'b-w'
+              })
               .png({ 
                 compressionLevel: 9,
-                colors: 2,  // 1-bit = 2 colors
-                palette: true
+                colors: 2,
+                palette: true,
+                dither: 1.0  // Use dithering for better quality
               })
-              .threshold(128)  // Convert to pure black/white
               .toFile('trmnl-screenshot.png');
             
             console.log('Screenshot saved as trmnl-screenshot.png');
