@@ -1,0 +1,139 @@
+name: TRMNL Screenshot
+
+on:
+  schedule:
+    # Run at :40 every hour from 05:40 to 00:40 Madrid time (CET/CEST)
+    - cron: '40 4-23 * * *'  # 05:40-00:40 Madrid = 04:40-23:40 UTC (CET) / 03:40-22:40 UTC (CEST)
+  workflow_dispatch:  # Allow manual triggering
+    inputs:
+      url:
+        description: 'URL to screenshot (optional - overrides default)'
+        required: false
+        type: string
+
+jobs:
+  screenshot:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Cache Playwright browsers
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
+        restore-keys: |
+          ${{ runner.os }}-playwright-
+          
+    - name: Install dependencies
+      run: |
+        npm init -y
+        npm install playwright sharp
+        
+    - name: Install Playwright Chromium
+      run: npx playwright install chromium
+      
+    - name: Create screenshot script
+      run: |
+        cat > screenshot.js << 'EOF'
+        const { chromium } = require('playwright');
+        const sharp = require('sharp');
+        const fs = require('fs');
+        
+        (async () => {
+          const browser = await chromium.launch({
+            headless: true,
+            args: ['--no-sandbox', '--disable-setuid-sandbox']
+          });
+          
+          const page = await browser.newPage({
+            viewport: { width: 800, height: 480 }
+          });
+          
+          // Set longer timeout for font loading
+          page.setDefaultTimeout(30000);
+          
+          try {
+            const url = process.env.SCREENSHOT_URL || 'https://example.com';
+            console.log(`Taking screenshot of: ${url}`);
+            
+            await page.goto(url, { 
+              waitUntil: 'networkidle',
+              timeout: 30000 
+            });
+            
+            // Wait for fonts to load
+            await page.evaluate(() => {
+              return document.fonts.ready;
+            });
+            
+            // Additional wait to ensure everything is rendered
+            await page.waitForTimeout(3000);
+            
+            // Take screenshot
+            const screenshot = await page.screenshot({
+              type: 'png',
+              fullPage: false
+            });
+            
+            // Convert to 1-bit PNG (pure black and white)
+            await sharp(screenshot)
+              .png({ 
+                compressionLevel: 9,
+                colors: 2,  // 1-bit = 2 colors
+                palette: true
+              })
+              .threshold(128)  // Convert to pure black/white
+              .toFile('trmnl-screenshot.png');
+            
+            console.log('Screenshot saved as trmnl-screenshot.png');
+            
+            // Log file size for monitoring
+            const stats = fs.statSync('trmnl-screenshot.png');
+            console.log(`File size: ${stats.size} bytes`);
+            
+          } catch (error) {
+            console.error('Error taking screenshot:', error);
+            process.exit(1);
+          } finally {
+            await browser.close();
+          }
+        })();
+        EOF
+        
+    - name: Take screenshot
+      env:
+        SCREENSHOT_URL: ${{ inputs.url || 'https://your-website-url.com' }}  # Replace with your actual URL
+      run: node screenshot.js
+      
+    - name: Verify screenshot
+      run: |
+        if [ -f "trmnl-screenshot.png" ]; then
+          echo "Screenshot created successfully"
+          file trmnl-screenshot.png
+        else
+          echo "Screenshot not found!"
+          exit 1
+        fi
+        
+    - name: Commit screenshot
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add trmnl-screenshot.png
+        
+        # Only commit if there are changes
+        if ! git diff --cached --quiet; then
+          git commit -m "Update TRMNL screenshot $(date +'%Y-%m-%d %H:%M:%S')"
+          git push
+          echo "Screenshot updated and committed"
+        else
+          echo "No changes to screenshot"
+        fi
