@@ -58,7 +58,7 @@ jobs:
           });
           
           // Set longer timeout for font loading
-          page.setDefaultTimeout(30000);
+          page.setDefaultTimeout(60000);
           
           try {
             const url = process.env.SCREENSHOT_URL || 'https://example.com';
@@ -66,7 +66,7 @@ jobs:
             
             await page.goto(url, { 
               waitUntil: 'networkidle',
-              timeout: 30000 
+              timeout: 60000 
             });
             
             // Wait for fonts to load
@@ -75,7 +75,7 @@ jobs:
             });
             
             // Additional wait to ensure everything is rendered
-            await page.waitForTimeout(3000);
+            await page.waitForTimeout(5000);
             
             // Take screenshot
             const screenshot = await page.screenshot({
@@ -110,7 +110,7 @@ jobs:
         
     - name: Take screenshot
       env:
-        SCREENSHOT_URL: ${{ inputs.url || 'https://your-website-url.com' }}  # Replace with your actual URL
+        SCREENSHOT_URL: ${{ inputs.url || 'https://wetterdirect.netlify.app/dashboard' }}  # Replace with your actual URL
       run: node screenshot.js
       
     - name: Verify screenshot
