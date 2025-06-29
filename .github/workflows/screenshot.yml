@@ -53,12 +53,13 @@ jobs:
             args: ['--no-sandbox', '--disable-setuid-sandbox']
           });
           
-          const page = await browser.newPage({
-            viewport: { width: 800, height: 480 }
+          // Create context with user agent
+          const context = await browser.newContext({
+            viewport: { width: 800, height: 480 },
+            userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
           });
           
-          // Set desktop user agent for proper font loading
-          await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+          const page = await context.newPage();
           
           // Set longer timeout for font loading
           page.setDefaultTimeout(90000);
@@ -164,6 +165,7 @@ jobs:
             console.error('Error taking screenshot:', error);
             process.exit(1);
           } finally {
+            await context.close();
             await browser.close();
           }
         })();
