@@ -2,8 +2,17 @@ name: TRMNL Screenshot
 
 on:
   schedule:
-    # Run at :40 every hour from 05:40 to 00:40 Madrid time (CET/CEST)
-    - cron: '40 4-23 * * *'  # 05:40-00:40 Madrid = 04:40-23:40 UTC (CET) / 03:40-22:40 UTC (CEST)
+    # Custom frequency schedule (Madrid time):
+    # Every hour from 1 AM to 6 AM
+    - cron: '0 1-5 * * *'
+    # Every 30 minutes from 6 AM to 9 AM  
+    - cron: '0,30 6-8 * * *'
+    # Every 20 minutes from 9 AM to 10 PM
+    - cron: '0,20,40 9-21 * * *'
+    # Every 30 minutes from 10 PM to midnight
+    - cron: '0,30 22-23 * * *'
+    # Every 30 minutes from midnight to 1 AM
+    - cron: '0,30 0 * * *'
   workflow_dispatch:  # Allow manual triggering
     inputs:
       url:
