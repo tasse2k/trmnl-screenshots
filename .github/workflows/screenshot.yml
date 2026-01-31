@@ -212,6 +212,7 @@ jobs:
         # Only commit if there are changes
         if ! git diff --cached --quiet; then
           git commit -m "Update screenshot 1 $(date +'%Y-%m-%d %H:%M:%S')"
+          git pull --rebase origin main
           git push
           echo "Screenshot updated and committed"
         else
@@ -220,6 +221,7 @@ jobs:
 
   screenshot-secondary:
     runs-on: ubuntu-latest
+    needs: screenshot-primary
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.job == 'secondary' || inputs.job == 'both'))
     
     steps:
@@ -404,6 +406,7 @@ jobs:
         # Only commit if there are changes
         if ! git diff --cached --quiet; then
           git commit -m "Update screenshot 2 $(date +'%Y-%m-%d %H:%M:%S')"
+          git pull --rebase origin main
           git push
           echo "Screenshot updated and committed"
         else
