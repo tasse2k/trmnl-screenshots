@@ -2,14 +2,18 @@ name: Automated Screenshots
 
 on:
   schedule:
-    # Every hour from 1 AM to 5 AM
-    - cron: '0 1-4 * * *'
-    # Every 30 minutes from 5 AM to midnight (next day)
-    - cron: '0,30 5-23 * * *'
-    # 12:30 AM
-    - cron: '30 0 * * *'
-    
-  workflow_dispatch:  # Allow manual triggering
+    # Schedule aligned to Barcelona + Blankenfelde (UTC+2)
+    # Morning peak (6-9am local = 4-7am UTC): every 15 min
+    - cron: '0,15,30,45 4-6 * * *'
+    # Daytime (9am-6pm local = 7am-4pm UTC): every 30 min
+    - cron: '0,30 7-15 * * *'
+    # Evening peak (6-10pm local = 4-8pm UTC): every 30 min
+    - cron: '0,30 16-19 * * *'
+    # Night (10pm-6am local = 8pm-4am UTC): every 60 min
+    - cron: '0 20-23 * * *'
+    - cron: '0 0-3 * * *'
+
+  workflow_dispatch:
     inputs:
       url:
         description: 'URL to screenshot (optional - overrides default)'
@@ -29,16 +33,16 @@ jobs:
   screenshot-primary:
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.job == 'primary' || inputs.job == 'both'))
-    
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      
+
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '18'
-        
+
     - name: Cache Playwright browsers
       uses: actions/cache@v3
       with:
@@ -46,137 +50,90 @@ jobs:
         key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
         restore-keys: |
           ${{ runner.os }}-playwright-
-          
+
     - name: Install dependencies
       run: |
         npm init -y
         npm install playwright sharp
-        
+
     - name: Install Playwright Chromium
       run: npx playwright install chromium
-      
+
     - name: Create screenshot script
       run: |
         cat > screenshot.js << 'EOF'
         const { chromium } = require('playwright');
         const sharp = require('sharp');
         const fs = require('fs');
-        
+
         (async () => {
           const browser = await chromium.launch({
             headless: true,
             args: ['--no-sandbox', '--disable-setuid-sandbox']
           });
-          
-          // Create context with user agent
+
           const context = await browser.newContext({
             viewport: { width: 800, height: 480 },
             userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
           });
-          
+
           const page = await context.newPage();
-          
-          // Set longer timeout for font loading
           page.setDefaultTimeout(90000);
-          
+
           try {
             const url = process.env.SCREENSHOT_URL || 'https://example.com';
             const outputFile = process.env.OUTPUT_FILE || 'screenshot.png';
             console.log(`Taking screenshot of: ${url}`);
-            
-            await page.goto(url, { 
+
+            await page.goto(url, {
               waitUntil: 'networkidle',
-              timeout: 90000 
+              timeout: 90000
             });
-            
+
             // Wait for fonts to load completely
             await page.evaluate(async () => {
-              console.log('Starting font loading...');
-              
-              // Wait for document fonts
               await document.fonts.ready;
-              console.log('Document fonts ready');
-              
-              // Wait for any @font-face fonts to load
               const fontFaces = Array.from(document.fonts);
-              console.log(`Found ${fontFaces.length} font faces`);
-              
               await Promise.all(fontFaces.map(async (font) => {
-                try {
-                  await font.loaded;
-                  console.log(`Font loaded: ${font.family}`);
-                } catch (e) {
-                  console.log(`Font failed to load: ${font.family}`, e);
-                }
+                try { await font.loaded; } catch (e) {}
               }));
-              
-              // Force load common fonts
               const testFonts = ['Inter', 'Roboto', 'Arial', 'sans-serif'];
               for (const fontFamily of testFonts) {
-                try {
-                  await document.fonts.load(`16px "${fontFamily}"`);
-                  console.log(`Loaded font: ${fontFamily}`);
-                } catch (e) {
-                  console.log(`Could not load: ${fontFamily}`);
-                }
+                try { await document.fonts.load(`16px "${fontFamily}"`); } catch (e) {}
               }
-              
-              // Additional check for web fonts
               return new Promise((resolve) => {
-                if (document.fonts.status === 'loaded') {
-                  console.log('All fonts loaded successfully');
-                  resolve();
-                } else {
-                  document.fonts.addEventListener('loadingdone', () => {
-                    console.log('Font loading done event fired');
-                    resolve();
-                  });
-                  // Fallback timeout
-                  setTimeout(() => {
-                    console.log('Font loading timeout reached');
-                    resolve();
-                  }, 15000);
+                if (document.fonts.status === 'loaded') { resolve(); }
+                else {
+                  document.fonts.addEventListener('loadingdone', () => resolve());
+                  setTimeout(() => resolve(), 15000);
                 }
               });
             });
-            
-            // Additional wait to ensure everything is rendered
+
             await page.waitForTimeout(8000);
-            
-            // Take screenshot with high quality
+
             const screenshot = await page.screenshot({
               type: 'png',
               fullPage: false,
               clip: { x: 0, y: 0, width: 800, height: 480 }
             });
-            
-            // Convert to optimized 1-bit PNG
+
             await sharp(screenshot)
-              .resize(800, 480, { 
+              .resize(800, 480, {
                 kernel: sharp.kernel.lanczos3,
                 fit: 'contain',
                 background: { r: 255, g: 255, b: 255, alpha: 1 }
               })
               .gamma(1.2)
               .sharpen({ sigma: 0.5, m1: 1, m2: 2 })
-              .threshold(140, { 
-                greyscale: true,
-                colourSpace: 'b-w'
-              })
-              .png({ 
-                compressionLevel: 9,
-                colors: 2,
-                palette: true,
-                dither: 1.0
-              })
+              .threshold(140, { greyscale: true, colourSpace: 'b-w' })
+              .png({ compressionLevel: 9, colors: 2, palette: true, dither: 1.0 })
               .toFile(outputFile);
-            
+
             console.log(`Screenshot saved as ${outputFile}`);
-            
-            // Log file size for monitoring
             const stats = fs.statSync(outputFile);
             console.log(`File size: ${stats.size} bytes`);
-            
+
           } catch (error) {
             console.error('Error taking screenshot:', error);
             process.exit(1);
@@ -186,13 +143,13 @@ jobs:
           }
         })();
         EOF
-        
+
     - name: Take screenshot
       env:
         SCREENSHOT_URL: ${{ inputs.url || 'https://wetterdirect.netlify.app/dashboard' }}
         OUTPUT_FILE: 'trmnl-screenshot.png'
       run: node screenshot.js
-      
+
     - name: Verify screenshot
       run: |
         if [ -f "trmnl-screenshot.png" ]; then
@@ -202,14 +159,13 @@ jobs:
           echo "Screenshot not found!"
           exit 1
         fi
-        
+
     - name: Commit screenshot
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         git add trmnl-screenshot.png
-        
-        # Only commit if there are changes
+
         if ! git diff --cached --quiet; then
           git commit -m "Update screenshot 1 $(date +'%Y-%m-%d %H:%M:%S')"
           git pull --rebase origin main
@@ -219,20 +175,39 @@ jobs:
           echo "No changes to screenshot"
         fi
 
+    - name: Push to TRMNL webhook
+      if: success()
+      env:
+        TRMNL_WEBHOOK_PRIMARY: ${{ secrets.TRMNL_WEBHOOK_PRIMARY }}
+      run: |
+        if [ -n "$TRMNL_WEBHOOK_PRIMARY" ]; then
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: image/png" \
+            --data-binary @trmnl-screenshot.png \
+            "$TRMNL_WEBHOOK_PRIMARY")
+          echo "TRMNL webhook response: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::warning::TRMNL webhook push failed with status $HTTP_STATUS"
+          fi
+        else
+          echo "No TRMNL webhook configured for primary, skipping push"
+        fi
+
   screenshot-secondary:
     runs-on: ubuntu-latest
     needs: screenshot-primary
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.job == 'secondary' || inputs.job == 'both'))
-    
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      
+
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '18'
-        
+
     - name: Cache Playwright browsers
       uses: actions/cache@v3
       with:
@@ -240,137 +215,90 @@ jobs:
         key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
         restore-keys: |
           ${{ runner.os }}-playwright-
-          
+
     - name: Install dependencies
       run: |
         npm init -y
         npm install playwright sharp
-        
+
     - name: Install Playwright Chromium
       run: npx playwright install chromium
-      
+
     - name: Create screenshot script
       run: |
         cat > screenshot.js << 'EOF'
         const { chromium } = require('playwright');
         const sharp = require('sharp');
         const fs = require('fs');
-        
+
         (async () => {
           const browser = await chromium.launch({
             headless: true,
             args: ['--no-sandbox', '--disable-setuid-sandbox']
           });
-          
-          // Create context with user agent
+
           const context = await browser.newContext({
             viewport: { width: 800, height: 480 },
             userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
           });
-          
+
           const page = await context.newPage();
-          
-          // Set longer timeout for font loading
           page.setDefaultTimeout(90000);
-          
+
           try {
             const url = process.env.SCREENSHOT_URL || 'https://example.com';
             const outputFile = process.env.OUTPUT_FILE || 'screenshot.png';
             console.log(`Taking screenshot of: ${url}`);
-            
-            await page.goto(url, { 
+
+            await page.goto(url, {
               waitUntil: 'networkidle',
-              timeout: 90000 
+              timeout: 90000
             });
-            
+
             // Wait for fonts to load completely
             await page.evaluate(async () => {
-              console.log('Starting font loading...');
-              
-              // Wait for document fonts
               await document.fonts.ready;
-              console.log('Document fonts ready');
-              
-              // Wait for any @font-face fonts to load
               const fontFaces = Array.from(document.fonts);
-              console.log(`Found ${fontFaces.length} font faces`);
-              
               await Promise.all(fontFaces.map(async (font) => {
-                try {
-                  await font.loaded;
-                  console.log(`Font loaded: ${font.family}`);
-                } catch (e) {
-                  console.log(`Font failed to load: ${font.family}`, e);
-                }
+                try { await font.loaded; } catch (e) {}
               }));
-              
-              // Force load common fonts
               const testFonts = ['Inter', 'Roboto', 'Arial', 'sans-serif'];
               for (const fontFamily of testFonts) {
-                try {
-                  await document.fonts.load(`16px "${fontFamily}"`);
-                  console.log(`Loaded font: ${fontFamily}`);
-                } catch (e) {
-                  console.log(`Could not load: ${fontFamily}`);
-                }
+                try { await document.fonts.load(`16px "${fontFamily}"`); } catch (e) {}
               }
-              
-              // Additional check for web fonts
               return new Promise((resolve) => {
-                if (document.fonts.status === 'loaded') {
-                  console.log('All fonts loaded successfully');
-                  resolve();
-                } else {
-                  document.fonts.addEventListener('loadingdone', () => {
-                    console.log('Font loading done event fired');
-                    resolve();
-                  });
-                  // Fallback timeout
-                  setTimeout(() => {
-                    console.log('Font loading timeout reached');
-                    resolve();
-                  }, 15000);
+                if (document.fonts.status === 'loaded') { resolve(); }
+                else {
+                  document.fonts.addEventListener('loadingdone', () => resolve());
+                  setTimeout(() => resolve(), 15000);
                 }
               });
             });
-            
-            // Additional wait to ensure everything is rendered
+
             await page.waitForTimeout(8000);
-            
-            // Take screenshot with high quality
+
             const screenshot = await page.screenshot({
               type: 'png',
               fullPage: false,
               clip: { x: 0, y: 0, width: 800, height: 480 }
             });
-            
-            // Convert to optimized 1-bit PNG
+
             await sharp(screenshot)
-              .resize(800, 480, { 
+              .resize(800, 480, {
                 kernel: sharp.kernel.lanczos3,
                 fit: 'contain',
                 background: { r: 255, g: 255, b: 255, alpha: 1 }
               })
               .gamma(1.2)
               .sharpen({ sigma: 0.5, m1: 1, m2: 2 })
-              .threshold(140, { 
-                greyscale: true,
-                colourSpace: 'b-w'
-              })
-              .png({ 
-                compressionLevel: 9,
-                colors: 2,
-                palette: true,
-                dither: 1.0
-              })
+              .threshold(140, { greyscale: true, colourSpace: 'b-w' })
+              .png({ compressionLevel: 9, colors: 2, palette: true, dither: 1.0 })
               .toFile(outputFile);
-            
+
             console.log(`Screenshot saved as ${outputFile}`);
-            
-            // Log file size for monitoring
             const stats = fs.statSync(outputFile);
             console.log(`File size: ${stats.size} bytes`);
-            
+
           } catch (error) {
             console.error('Error taking screenshot:', error);
             process.exit(1);
@@ -380,13 +308,13 @@ jobs:
           }
         })();
         EOF
-        
+
     - name: Take screenshot
       env:
         SCREENSHOT_URL: 'https://wetterdirect.netlify.app/blankenfelde'
         OUTPUT_FILE: 'screenshot-2.png'
       run: node screenshot.js
-      
+
     - name: Verify screenshot
       run: |
         if [ -f "screenshot-2.png" ]; then
@@ -396,14 +324,13 @@ jobs:
           echo "Screenshot not found!"
           exit 1
         fi
-        
+
     - name: Commit screenshot
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         git add screenshot-2.png
-        
-        # Only commit if there are changes
+
         if ! git diff --cached --quiet; then
           git commit -m "Update screenshot 2 $(date +'%Y-%m-%d %H:%M:%S')"
           git pull --rebase origin main
@@ -411,4 +338,23 @@ jobs:
           echo "Screenshot updated and committed"
         else
           echo "No changes to screenshot"
+        fi
+
+    - name: Push to TRMNL webhook
+      if: success()
+      env:
+        TRMNL_WEBHOOK_SECONDARY: ${{ secrets.TRMNL_WEBHOOK_SECONDARY }}
+      run: |
+        if [ -n "$TRMNL_WEBHOOK_SECONDARY" ]; then
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: image/png" \
+            --data-binary @screenshot-2.png \
+            "$TRMNL_WEBHOOK_SECONDARY")
+          echo "TRMNL webhook response: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "::warning::TRMNL webhook push failed with status $HTTP_STATUS"
+          fi
+        else
+          echo "No TRMNL webhook configured for secondary, skipping push"
         fi
