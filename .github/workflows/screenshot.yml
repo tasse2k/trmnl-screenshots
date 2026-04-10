@@ -82,9 +82,9 @@ jobs:
         # 1-bit monochrome PNG per TRMNL spec + community best practices
         # https://docs.trmnl.com/go/diy/imagemagick-guide
         convert trmnl-screenshot-raw.png \
-          -dither FloydSteinberg -remap pattern:gray50 \
-          -depth 1 -colors 2 -monochrome \
-          -resize 800x480 -gravity center -extent 800x480 -background white \
+          -resize 800x480! \
+          -colorspace Gray -threshold 50% \
+          -depth 1 \
           -strip \
           png:trmnl-screenshot.png
         echo "Converted to TRMNL format:"
@@ -147,9 +147,9 @@ jobs:
     - name: Convert to TRMNL format
       run: |
         convert screenshot-2-raw.png \
-          -dither FloydSteinberg -remap pattern:gray50 \
-          -depth 1 -colors 2 -monochrome \
-          -resize 800x480 -gravity center -extent 800x480 -background white \
+          -resize 800x480! \
+          -colorspace Gray -threshold 50% \
+          -depth 1 \
           -strip \
           png:screenshot-2.png
         echo "Converted to TRMNL format:"
