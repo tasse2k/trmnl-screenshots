@@ -50,7 +50,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '22'
 
     - name: Cache Playwright browsers
       uses: actions/cache@v4
@@ -68,6 +68,9 @@ jobs:
     - name: Install Playwright Chromium
       run: npx playwright install chromium
 
+    - name: Install ImageMagick
+      run: sudo apt-get update && sudo apt-get install -y imagemagick
+
     - name: Take screenshot
       env:
         SCREENSHOT_URL: ${{ inputs.url || 'https://wetterdirect.netlify.app/dashboard' }}
@@ -78,7 +81,7 @@ jobs:
       run: |
         # 1-bit monochrome PNG per TRMNL spec + community best practices
         # https://docs.trmnl.com/go/diy/imagemagick-guide
-        magick trmnl-screenshot-raw.png \
+        convert trmnl-screenshot-raw.png \
           -dither FloydSteinberg -remap pattern:gray50 \
           -depth 1 -colors 2 -monochrome \
           -resize 800x480 -gravity center -extent 800x480 -background white \
@@ -114,7 +117,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '22'
 
     - name: Cache Playwright browsers
       uses: actions/cache@v4
@@ -132,6 +135,9 @@ jobs:
     - name: Install Playwright Chromium
       run: npx playwright install chromium
 
+    - name: Install ImageMagick
+      run: sudo apt-get update && sudo apt-get install -y imagemagick
+
     - name: Take screenshot
       env:
         SCREENSHOT_URL: 'https://wetterdirect.netlify.app/blankenfelde'
@@ -140,7 +146,7 @@ jobs:
 
     - name: Convert to TRMNL format
       run: |
-        magick screenshot-2-raw.png \
+        convert screenshot-2-raw.png \
           -dither FloydSteinberg -remap pattern:gray50 \
           -depth 1 -colors 2 -monochrome \
           -resize 800x480 -gravity center -extent 800x480 -background white \
