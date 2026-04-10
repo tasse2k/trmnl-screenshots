@@ -69,7 +69,7 @@ jobs:
       run: npx playwright install chromium
 
     - name: Install ImageMagick
-      run: sudo apt-get update && sudo apt-get install -y imagemagick
+      run: command -v convert >/dev/null || (sudo apt-get update && sudo apt-get install -y imagemagick)
 
     - name: Take screenshot
       env:
@@ -136,7 +136,7 @@ jobs:
       run: npx playwright install chromium
 
     - name: Install ImageMagick
-      run: sudo apt-get update && sudo apt-get install -y imagemagick
+      run: command -v convert >/dev/null || (sudo apt-get update && sudo apt-get install -y imagemagick)
 
     - name: Take screenshot
       env:
