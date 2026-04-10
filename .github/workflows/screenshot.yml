@@ -183,25 +183,6 @@ jobs:
           echo "No changes to screenshot"
         fi
 
-    - name: Push to TRMNL webhook
-      if: success()
-      env:
-        TRMNL_WEBHOOK_PRIMARY: ${{ secrets.TRMNL_WEBHOOK_PRIMARY }}
-      run: |
-        if [ -n "$TRMNL_WEBHOOK_PRIMARY" ]; then
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST \
-            -H "Content-Type: image/png" \
-            --data-binary @trmnl-screenshot.png \
-            "$TRMNL_WEBHOOK_PRIMARY")
-          echo "TRMNL webhook response: $HTTP_STATUS"
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "::warning::TRMNL webhook push failed with status $HTTP_STATUS"
-          fi
-        else
-          echo "No TRMNL webhook configured for primary, skipping push"
-        fi
-
   screenshot-secondary:
     runs-on: ubuntu-latest
     needs: screenshot-primary
@@ -345,23 +326,4 @@ jobs:
           echo "Screenshot updated and committed"
         else
           echo "No changes to screenshot"
-        fi
-
-    - name: Push to TRMNL webhook
-      if: success()
-      env:
-        TRMNL_WEBHOOK_SECONDARY: ${{ secrets.TRMNL_WEBHOOK_SECONDARY }}
-      run: |
-        if [ -n "$TRMNL_WEBHOOK_SECONDARY" ]; then
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST \
-            -H "Content-Type: image/png" \
-            --data-binary @screenshot-2.png \
-            "$TRMNL_WEBHOOK_SECONDARY")
-          echo "TRMNL webhook response: $HTTP_STATUS"
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "::warning::TRMNL webhook push failed with status $HTTP_STATUS"
-          fi
-        else
-          echo "No TRMNL webhook configured for secondary, skipping push"
         fi
