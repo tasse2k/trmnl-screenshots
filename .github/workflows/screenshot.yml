@@ -2,16 +2,25 @@ name: Automated Screenshots
 
 on:
   schedule:
-    # Schedule aligned to Barcelona + Blankenfelde (UTC+2)
-    # Morning peak (6-9am local = 4-7am UTC): every 15 min
-    - cron: '0,15,30,45 4-6 * * *'
-    # Daytime (9am-6pm local = 7am-4pm UTC): every 30 min
-    - cron: '0,30 7-15 * * *'
-    # Evening peak (6-10pm local = 4-8pm UTC): every 30 min
-    - cron: '0,30 16-19 * * *'
-    # Night (10pm-6am local = 8pm-4am UTC): every 60 min
-    - cron: '0 20-23 * * *'
-    - cron: '0 0-3 * * *'
+    # Schedule for Barcelona + Blankenfelde (CET/CEST = UTC+1 winter, UTC+2 summer)
+    # UTC windows are widened to cover both DST states — no manual adjustment needed.
+    # Offset by -3 min so screenshots are ready before device wakes at round times.
+    # Avg Action runtime: ~80s. Firing at :57 → committed by :59 → device wakes at :00.
+    #
+    # Night (1-6am local): hourly — merged UTC window: 23-5
+    - cron: '57 23 * * *'
+    - cron: '57 0-4 * * *'
+    # Waking up (6-7:30am local): every 30 min — merged UTC: 4-6:30
+    - cron: '27,57 4-5 * * *'
+    - cron: '27 6 * * *'
+    # Morning peak (7:30-10:30am local): every 15 min — merged UTC: 5:30-9:30
+    - cron: '27,42,57 5 * * *'
+    - cron: '12,27,42,57 6-8 * * *'
+    - cron: '12,27 9 * * *'
+    # Daytime + evening (10:30am-10pm local): every 30 min — merged UTC: 8:30-21
+    - cron: '27,57 9-20 * * *'
+    # Winding down (10pm-1am local): hourly — merged UTC: 20-0
+    - cron: '57 20-23 * * *'
 
   workflow_dispatch:
     inputs:
@@ -118,21 +127,18 @@ jobs:
               clip: { x: 0, y: 0, width: 800, height: 480 }
             });
 
+            // Save raw screenshot for ImageMagick processing
+            const rawFile = outputFile.replace('.png', '-raw.png');
             await sharp(screenshot)
               .resize(800, 480, {
                 kernel: sharp.kernel.lanczos3,
                 fit: 'contain',
                 background: { r: 255, g: 255, b: 255, alpha: 1 }
               })
-              .gamma(1.2)
-              .sharpen({ sigma: 0.5, m1: 1, m2: 2 })
-              .threshold(140, { greyscale: true, colourSpace: 'b-w' })
-              .png({ compressionLevel: 9, colors: 2, palette: true, dither: 1.0 })
-              .toFile(outputFile);
+              .png()
+              .toFile(rawFile);
 
-            console.log(`Screenshot saved as ${outputFile}`);
-            const stats = fs.statSync(outputFile);
-            console.log(`File size: ${stats.size} bytes`);
+            console.log(`Raw screenshot saved as ${rawFile}`);
 
           } catch (error) {
             console.error('Error taking screenshot:', error);
@@ -150,15 +156,17 @@ jobs:
         OUTPUT_FILE: 'trmnl-screenshot.png'
       run: node screenshot.js
 
-    - name: Verify screenshot
+    - name: Convert to TRMNL format
       run: |
-        if [ -f "trmnl-screenshot.png" ]; then
-          echo "Screenshot created successfully"
-          file trmnl-screenshot.png
-        else
-          echo "Screenshot not found!"
-          exit 1
-        fi
+        # Convert to 1-bit monochrome PNG per TRMNL spec
+        # https://docs.trmnl.com/go/diy/imagemagick-guide
+        magick trmnl-screenshot-raw.png \
+          -dither FloydSteinberg -remap pattern:gray50 \
+          -depth 1 -strip \
+          png:trmnl-screenshot.png
+        echo "Converted to TRMNL format:"
+        file trmnl-screenshot.png
+        identify trmnl-screenshot.png
 
     - name: Commit screenshot
       run: |
@@ -283,21 +291,18 @@ jobs:
               clip: { x: 0, y: 0, width: 800, height: 480 }
             });
 
+            // Save raw screenshot for ImageMagick processing
+            const rawFile = outputFile.replace('.png', '-raw.png');
             await sharp(screenshot)
               .resize(800, 480, {
                 kernel: sharp.kernel.lanczos3,
                 fit: 'contain',
                 background: { r: 255, g: 255, b: 255, alpha: 1 }
               })
-              .gamma(1.2)
-              .sharpen({ sigma: 0.5, m1: 1, m2: 2 })
-              .threshold(140, { greyscale: true, colourSpace: 'b-w' })
-              .png({ compressionLevel: 9, colors: 2, palette: true, dither: 1.0 })
-              .toFile(outputFile);
+              .png()
+              .toFile(rawFile);
 
-            console.log(`Screenshot saved as ${outputFile}`);
-            const stats = fs.statSync(outputFile);
-            console.log(`File size: ${stats.size} bytes`);
+            console.log(`Raw screenshot saved as ${rawFile}`);
 
           } catch (error) {
             console.error('Error taking screenshot:', error);
@@ -315,15 +320,17 @@ jobs:
         OUTPUT_FILE: 'screenshot-2.png'
       run: node screenshot.js
 
-    - name: Verify screenshot
+    - name: Convert to TRMNL format
       run: |
-        if [ -f "screenshot-2.png" ]; then
-          echo "Screenshot created successfully"
-          file screenshot-2.png
-        else
-          echo "Screenshot not found!"
-          exit 1
-        fi
+        # Convert to 1-bit monochrome PNG per TRMNL spec
+        # https://docs.trmnl.com/go/diy/imagemagick-guide
+        magick screenshot-2-raw.png \
+          -dither FloydSteinberg -remap pattern:gray50 \
+          -depth 1 -strip \
+          png:screenshot-2.png
+        echo "Converted to TRMNL format:"
+        file screenshot-2.png
+        identify screenshot-2.png
 
     - name: Commit screenshot
       run: |

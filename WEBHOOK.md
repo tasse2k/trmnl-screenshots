@@ -1,90 +1,122 @@
-# METEOframe TRMNL Webhook Integration
+# METEOframe TRMNL Integration
 
 ## Problem
 
 TRMNL's standard Image Display plugin fetches at random hourly intervals, completely out of sync with when GitHub Actions generates fresh screenshots. Max staleness can be 60+ minutes.
 
-## Solution
+## Solution: TRMNL Redirect Plugin + Dynamic Refresh Rate
 
-Use TRMNL's **Webhook Image** plugin. GitHub Actions pushes PNGs directly to TRMNL's server after generation. The image is ready and waiting when the device wakes. Combined with TRMNL's **Playlist Scheduler** for timezone-aware wake cycles, this gives fresh data when it matters (morning/evening) and preserves battery overnight.
+A Netlify function at `/trmnl/{location}` serves JSON for TRMNL's **Redirect plugin**:
+
+```json
+{"filename": "barcelona", "url": "https://raw.githubusercontent.com/.../trmnl-screenshot.png", "refresh_rate": 480}
+```
+
+The `refresh_rate` (in seconds) adjusts dynamically based on the **local time** in the location's timezone, and snaps to **round clock times** (9:00, 9:15, 9:30, etc.):
+
+| Local time | Interval | Example wakes |
+|---|---|---|
+| 1:00–6:00 AM | every 60 min | 1:00, 2:00, 3:00... |
+| 6:00–7:30 AM | every 30 min | 6:00, 6:30, 7:00, 7:30 |
+| 7:30–10:30 AM | every 15 min | 7:30, 7:45, 8:00... |
+| 10:30 AM–10:00 PM | every 30 min | 10:30, 11:00, 11:30... |
+| 10:00 PM–1:00 AM | every 60 min | 22:00, 23:00, 0:00 |
+
+**~20 device refreshes/day** — preserves battery while keeping weather fresh when it matters.
 
 ## Architecture
 
 ```
-GitHub Actions (timezone-aware cron)
-  → Playwright generates 800x480 1-bit PNG (unchanged)
-  → Commits PNG to repo (unchanged, serves as fallback/debug)
-  → curl POST PNG to TRMNL Webhook Image URL(s)
-        ↓
-TRMNL server stores image immediately (seconds)
-        ↓
-Device wakes on Playlist Scheduler → picks up fresh image
+TRMNL device wakes
+  → TRMNL server fetches https://wetterdirect.netlify.app/trmnl/{location}
+  → Netlify returns JSON: {url, refresh_rate}
+  → Device fetches screenshot PNG directly from GitHub
+  → Device displays image, sleeps for refresh_rate seconds
+  → Repeat at next round time
 ```
 
-## Backwards Compatibility
+GitHub Actions generates screenshots independently on its own cron schedule. The Redirect endpoint just points to the latest PNG in the repo.
 
-Screenshot filenames and repo structure are unchanged:
-- `trmnl-screenshot.png` (Barcelona/dashboard)
-- `screenshot-2.png` (Blankenfelde)
+## Endpoints
 
-The raw GitHub URLs still work. Old Image Display plugins can run as fallback.
-
-## Coordinated Schedule (Barcelona + Blankenfelde, both UTC+2)
-
-| Local time | Purpose | GitHub Action | TRMNL device wake | Daily runs |
-|---|---|---|---|---|
-| 6:00–9:00 AM | Morning peak | every 15 min | every 15 min | ~12 |
-| 9:00 AM–6:00 PM | Daytime | every 30 min | every 60 min | ~18 |
-| 6:00–10:00 PM | Evening peak | every 30 min | every 30 min | ~8 |
-| 10:00 PM–6:00 AM | Night | every 60 min | off / every 2h | ~4 |
-
-**Total: ~35-40 GitHub Action runs/day** (well within free tier: 2000 min/month, ~2 min/run)
-
-**Total TRMNL device refreshes: ~20/day** (good battery life)
-
-## Setup Instructions
-
-### Step 1: Create Webhook Image plugins on TRMNL
-
-For each device (Barcelona + Blankenfelde):
-
-1. Go to **TRMNL dashboard** → Plugins → **Webhook Image** → "Add to my plugins"
-2. Give it a name (e.g. "METEOframe Barcelona")
-3. After saving, copy the **Webhook URL** shown in plugin settings
-4. Keep the old Image Display plugin running as fallback while testing
-
-### Step 2: Add webhook URLs as GitHub secrets
-
-1. Go to GitHub → `tasse2k/trmnl-screenshots` → Settings → Secrets and variables → Actions
-2. Add two repository secrets:
-   - `TRMNL_WEBHOOK_PRIMARY` → paste the Barcelona webhook URL
-   - `TRMNL_WEBHOOK_SECONDARY` → paste the Blankenfelde webhook URL
-
-### Step 3: Configure Playlist Scheduler on each TRMNL device
-
-Set timezone-aware refresh rates:
-
-| Time window | Refresh interval |
+| Location | Redirect URL |
 |---|---|
-| 6:00–9:00 AM | every 15 min |
-| 9:00 AM–6:00 PM | every 60 min |
-| 6:00–10:00 PM | every 30 min |
-| 10:00 PM–6:00 AM | off or every 2h |
+| Barcelona | `https://wetterdirect.netlify.app/trmnl/barcelona` |
+| Blankenfelde | `https://wetterdirect.netlify.app/trmnl/blankenfelde` |
 
-### Step 4: Test
+## Setup Guide
 
-1. Trigger a manual workflow run: Actions → "Automated Screenshots" → Run workflow
-2. Check the workflow logs for "TRMNL webhook response: 200"
-3. Verify the image appears in the TRMNL Webhook Image plugin preview
-4. Wait for the device's next wake cycle to confirm it displays
+### Step 1: Verify the endpoint is working
 
-### Step 5: Remove old Image Display plugin (optional)
+```bash
+curl -s https://wetterdirect.netlify.app/trmnl/barcelona | python3 -m json.tool
+```
 
-Once the webhook approach is confirmed working, you can remove the old Image Display plugin from each device.
+Expected response:
+```json
+{
+    "filename": "barcelona",
+    "url": "https://raw.githubusercontent.com/tasse2k/trmnl-screenshots/main/trmnl-screenshot.png",
+    "refresh_rate": 480
+}
+```
 
-## Future
+The `refresh_rate` will vary based on the current local time in Barcelona.
 
-- UUID-based location management for anonymous customer onboarding
-- Per-timezone schedule configs when adding locations outside UTC+2
-- Published TRMNL Recipe for self-service installation
-- Automated webhook URL registration via meteoframe.com
+### Step 2: Verify the screenshot URL is accessible
+
+```bash
+curl -sI https://raw.githubusercontent.com/tasse2k/trmnl-screenshots/main/trmnl-screenshot.png | head -5
+```
+
+Should return `200 OK` with `Content-Type: image/png`.
+
+### Step 3: Configure TRMNL device
+
+1. Go to **TRMNL dashboard** → Plugins
+2. Search for **Redirect** plugin → "Add to my plugins"
+3. Give it a name (e.g. "METEOframe Barcelona")
+4. Set the **URL** to: `https://wetterdirect.netlify.app/trmnl/barcelona`
+5. Set **Refresh rate** in the plugin to any value — it will be overridden by the dynamic `refresh_rate` in the JSON response
+6. Save
+
+### Step 4: Add to playlist
+
+1. Go to **Playlists** on TRMNL dashboard
+2. Add the Redirect plugin to your active playlist
+3. If you want it as the primary display, set it as the only plugin or mark it as "Important"
+
+### Step 5: Verify it's working
+
+1. Click **Force Refresh** in the plugin settings to trigger an immediate update
+2. Check **Netlify function logs** for: `📺 Redirect for barcelona: 8:00 (Europe/Madrid), interval=15min, next_refresh=900s`
+3. Watch the TRMNL device — it should display the weather screenshot
+4. After the refresh_rate expires, the device should wake and fetch again at the next round time
+
+### Step 6: Remove old Image Display plugin (optional)
+
+Once confirmed working, remove the old Image Display plugin that was polling the GitHub raw URL on a fixed hourly schedule.
+
+## Adding a New Location
+
+1. Ensure the location exists in `wetterstation/locations.json` and has a `config.json` with a `timezone` field
+2. Add a screenshot job in `trmnl-screenshots/.github/workflows/screenshot.yml`
+3. Add the screenshot mapping in `wetterstation/netlify/functions/redirect.js` → `SCREENSHOT_MAP`
+4. Deploy to Netlify (auto on push)
+5. Configure a new Redirect plugin on the TRMNL device pointing to `https://wetterdirect.netlify.app/trmnl/{location}`
+
+## Files
+
+| File | Repo | Purpose |
+|---|---|---|
+| `netlify/functions/redirect.js` | wetterstation | Redirect endpoint with dynamic refresh |
+| `netlify.toml` | wetterstation | Route `/trmnl/*` to redirect function |
+| `.github/workflows/screenshot.yml` | trmnl-screenshots | Generates screenshots on timezone-aware cron |
+| `locations/{slug}/config.json` | wetterstation | Location timezone for refresh calculation |
+
+## Troubleshooting
+
+- **Device not updating**: Check Netlify logs for the redirect request. Verify the Redirect plugin URL is correct.
+- **Wrong refresh rate**: Check the timezone in the location's `config.json`. The log line shows the local hour and calculated interval.
+- **Screenshot stale**: Check GitHub Actions — is the screenshot workflow running? Look at the commit timestamps on the PNG files.
+- **404 from GitHub raw URL**: The screenshot file might not exist yet for that location. Check `SCREENSHOT_MAP` in `redirect.js`.
