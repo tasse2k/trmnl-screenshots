@@ -1,5 +1,19 @@
 name: Automated Screenshots
 
+# ============================================================
+# ADDING A NEW CITY
+# ============================================================
+# 1. Add a new job below (copy screenshot-barcelona, rename slug/url/output)
+# 2. Chain it: needs: screenshot-<previous>
+# 3. Add the slug to KNOWN_LOCATIONS in wetterstation repo:
+#    - netlify/functions/screenshot.js
+#    - netlify/functions/redirect.js
+# 4. Add location config in wetterstation: locations/<slug>/config.json
+# 5. Add the dashboard route in wetterstation: netlify.toml
+# 6. Create TRMNL private plugin with polling URL:
+#    https://wetterdirect.netlify.app/trmnl/<slug>
+# ============================================================
+
 on:
   schedule:
     # Single entry every 15 min — frequency logic handled in the "check" job.
@@ -63,101 +77,108 @@ jobs:
           echo "UTC time: ${H}:${M}, slot: ${SLOT}, should_run: ${SHOULD_RUN}"
           echo "should_run=${SHOULD_RUN}" >> "$GITHUB_OUTPUT"
 
-  screenshot:
+  # ---- BARCELONA (runs first) ----
+  screenshot-barcelona:
     runs-on: ubuntu-latest
     needs: check-schedule
     if: |
       always() &&
       ((github.event_name == 'schedule' && needs.check-schedule.outputs.should_run == 'true') ||
-       github.event_name == 'workflow_dispatch')
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # ---- ADD NEW CITIES HERE ----
-          # slug: used as filename ({slug}.png) and Netlify endpoint (/img/{slug})
-          # url:  the weather dashboard URL to screenshot
-          - slug: barcelona
-            url: https://wetterdirect.netlify.app/barcelona
-          - slug: blankenfelde
-            url: https://wetterdirect.netlify.app/blankenfelde
+       (github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'barcelona')))
+    env:
+      SLUG: barcelona
+      SCREENSHOT_URL: https://wetterdirect.netlify.app/barcelona
 
     steps:
-    - name: Check if this location should run
-      id: filter
-      if: github.event_name == 'workflow_dispatch'
-      run: |
-        if [ "${{ inputs.job }}" = "all" ] || [ "${{ inputs.job }}" = "${{ matrix.slug }}" ]; then
-          echo "run=true" >> "$GITHUB_OUTPUT"
-        else
-          echo "run=false" >> "$GITHUB_OUTPUT"
-        fi
-
-    - name: Checkout repository
-      if: github.event_name == 'schedule' || steps.filter.outputs.run != 'false'
-      uses: actions/checkout@v4
-
-    - name: Setup Node.js
-      if: github.event_name == 'schedule' || steps.filter.outputs.run != 'false'
-      uses: actions/setup-node@v4
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
       with:
         node-version: '22'
-
-    - name: Cache Playwright browsers
-      if: github.event_name == 'schedule' || steps.filter.outputs.run != 'false'
-      uses: actions/cache@v4
+    - uses: actions/cache@v4
       with:
         path: ~/.cache/ms-playwright
         key: ${{ runner.os }}-playwright-${{ hashFiles('screenshot.js') }}
-        restore-keys: |
-          ${{ runner.os }}-playwright-
-
-    - name: Install dependencies
-      if: github.event_name == 'schedule' || steps.filter.outputs.run != 'false'
-      run: |
-        npm init -y
-        npm install playwright
-
-    - name: Install Playwright Chromium
-      if: github.event_name == 'schedule' || steps.filter.outputs.run != 'false'
-      run: npx playwright install chromium
-
+        restore-keys: ${{ runner.os }}-playwright-
+    - run: npm init -y && npm install playwright
+    - run: npx playwright install chromium
     - name: Install ImageMagick
-      if: github.event_name == 'schedule' || steps.filter.outputs.run != 'false'
       run: command -v convert >/dev/null || (sudo apt-get update && sudo apt-get install -y imagemagick)
 
     - name: Take screenshot
-      if: github.event_name == 'schedule' || steps.filter.outputs.run != 'false'
       env:
-        SCREENSHOT_URL: ${{ matrix.url }}
-        OUTPUT_FILE: '${{ matrix.slug }}.png'
+        OUTPUT_FILE: '${{ env.SLUG }}.png'
       run: node screenshot.js
 
     - name: Convert to TRMNL format
-      if: github.event_name == 'schedule' || steps.filter.outputs.run != 'false'
       run: |
-        # 1-bit monochrome PNG per TRMNL spec
-        # https://docs.trmnl.com/go/diy/imagemagick-guide
-        convert ${{ matrix.slug }}-raw.png \
-          -monochrome -colors 2 -depth 1 \
-          -strip \
-          png:${{ matrix.slug }}.png
-        echo "Converted to TRMNL format:"
-        identify ${{ matrix.slug }}.png
+        convert ${{ env.SLUG }}-raw.png \
+          -monochrome -colors 2 -depth 1 -strip \
+          png:${{ env.SLUG }}.png
+        identify ${{ env.SLUG }}.png
 
-    - name: Commit screenshot
-      if: github.event_name == 'schedule' || steps.filter.outputs.run != 'false'
+    - name: Commit
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git add ${{ matrix.slug }}.png
-
+        git add ${{ env.SLUG }}.png
         if ! git diff --cached --quiet; then
-          git commit -m "Update ${{ matrix.slug }} $(date +'%Y-%m-%d %H:%M:%S')"
+          git commit -m "Update ${{ env.SLUG }} $(date +'%Y-%m-%d %H:%M:%S')"
           git pull --rebase origin main
           git push
-          echo "Screenshot updated and committed"
+          echo "✅ ${{ env.SLUG }} updated"
         else
-          echo "No changes to screenshot"
+          echo "⏭️ ${{ env.SLUG }} unchanged"
+        fi
+
+  # ---- BLANKENFELDE (runs after barcelona) ----
+  screenshot-blankenfelde:
+    runs-on: ubuntu-latest
+    needs: [check-schedule, screenshot-barcelona]
+    if: |
+      always() &&
+      ((github.event_name == 'schedule' && needs.check-schedule.outputs.should_run == 'true') ||
+       (github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'blankenfelde')))
+    env:
+      SLUG: blankenfelde
+      SCREENSHOT_URL: https://wetterdirect.netlify.app/blankenfelde
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+    - uses: actions/cache@v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-playwright-${{ hashFiles('screenshot.js') }}
+        restore-keys: ${{ runner.os }}-playwright-
+    - run: npm init -y && npm install playwright
+    - run: npx playwright install chromium
+    - name: Install ImageMagick
+      run: command -v convert >/dev/null || (sudo apt-get update && sudo apt-get install -y imagemagick)
+
+    - name: Take screenshot
+      env:
+        OUTPUT_FILE: '${{ env.SLUG }}.png'
+      run: node screenshot.js
+
+    - name: Convert to TRMNL format
+      run: |
+        convert ${{ env.SLUG }}-raw.png \
+          -monochrome -colors 2 -depth 1 -strip \
+          png:${{ env.SLUG }}.png
+        identify ${{ env.SLUG }}.png
+
+    - name: Commit
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git pull --rebase origin main
+        git add ${{ env.SLUG }}.png
+        if ! git diff --cached --quiet; then
+          git commit -m "Update ${{ env.SLUG }} $(date +'%Y-%m-%d %H:%M:%S')"
+          git push
+          echo "✅ ${{ env.SLUG }} updated"
+        else
+          echo "⏭️ ${{ env.SLUG }} unchanged"
         fi
