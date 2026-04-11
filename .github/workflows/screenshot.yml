@@ -129,11 +129,11 @@ jobs:
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git pull --rebase origin main
         git add trmnl-screenshot.png
 
         if ! git diff --cached --quiet; then
           git commit -m "Update screenshot 1 $(date +'%Y-%m-%d %H:%M:%S')"
+          git pull --rebase origin main
           git push
           echo "Screenshot updated and committed"
         else
@@ -194,11 +194,11 @@ jobs:
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git pull --rebase origin main
         git add screenshot-2.png
 
         if ! git diff --cached --quiet; then
           git commit -m "Update screenshot 2 $(date +'%Y-%m-%d %H:%M:%S')"
+          git pull --rebase origin main
           git push
           echo "Screenshot updated and committed"
         else
