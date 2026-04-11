@@ -2,25 +2,9 @@ name: Automated Screenshots
 
 on:
   schedule:
-    # Schedule for Barcelona + Blankenfelde (CET/CEST = UTC+1 winter, UTC+2 summer)
-    # UTC windows are widened to cover both DST states — no manual adjustment needed.
-    # Offset by -3 min so screenshots are ready before device wakes at round times.
-    # Avg Action runtime: ~80s. Firing at :57 → committed by :59 → device wakes at :00.
-    #
-    # Night (1-6am local): hourly — merged UTC window: 23-5
-    - cron: '57 23 * * *'
-    - cron: '57 0-4 * * *'
-    # Waking up (6-7:30am local): every 30 min — merged UTC: 4-6:30
-    - cron: '27,57 4-5 * * *'
-    - cron: '27 6 * * *'
-    # Morning peak (7:30-10:30am local): every 15 min — merged UTC: 5:30-9:30
-    - cron: '27,42,57 5 * * *'
-    - cron: '12,27,42,57 6-8 * * *'
-    - cron: '12,27 9 * * *'
-    # Daytime + evening (10:30am-10pm local): every 30 min — merged UTC: 8:30-21
-    - cron: '27,57 9-20 * * *'
-    # Winding down (10pm-1am local): hourly — merged UTC: 20-0
-    - cron: '57 20-23 * * *'
+    # Single entry every 15 min — frequency logic handled in the "check" job.
+    # One cron entry avoids GitHub throttling that occurred with 9 separate entries.
+    - cron: '12,27,42,57 * * * *'
 
   workflow_dispatch:
     inputs:
@@ -38,10 +22,63 @@ on:
           - both
         default: both
 
+concurrency:
+  group: screenshot
+  cancel-in-progress: false
+
 jobs:
+  check-schedule:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    outputs:
+      should_run: ${{ steps.decide.outputs.should_run }}
+    steps:
+      - name: Decide if this slot should run
+        id: decide
+        run: |
+          # Current UTC hour and minute
+          H=$(date -u +%-H)
+          M=$(date -u +%-M)
+
+          # Schedule (all times UTC, covering CEST UTC+2 and CET UTC+1):
+          #   Night   (23-5 UTC):  hourly    → only :57
+          #   Waking  (4-6 UTC):   every 30m → :27, :57
+          #   Peak    (5-9 UTC):   every 15m → :12, :27, :42, :57
+          #   Daytime (9-20 UTC):  every 30m → :27, :57
+          #   Wind-down (20-23):   hourly    → :57
+
+          SHOULD_RUN="false"
+
+          # Round minute to nearest slot
+          if [ "$M" -ge 10 ] && [ "$M" -le 14 ]; then SLOT=12;
+          elif [ "$M" -ge 25 ] && [ "$M" -le 29 ]; then SLOT=27;
+          elif [ "$M" -ge 40 ] && [ "$M" -le 44 ]; then SLOT=42;
+          elif [ "$M" -ge 55 ] || [ "$M" -le 59 ]; then SLOT=57;
+          else SLOT=-1; fi
+
+          if [ "$SLOT" -eq 57 ]; then
+            # :57 runs every hour (all periods)
+            SHOULD_RUN="true"
+          elif [ "$SLOT" -eq 27 ]; then
+            # :27 runs during waking (4-6), peak (5-9), daytime (9-20)
+            if [ "$H" -ge 4 ] && [ "$H" -le 20 ]; then SHOULD_RUN="true"; fi
+          elif [ "$SLOT" -eq 42 ]; then
+            # :42 runs during peak only (5-8)
+            if [ "$H" -ge 5 ] && [ "$H" -le 8 ]; then SHOULD_RUN="true"; fi
+          elif [ "$SLOT" -eq 12 ]; then
+            # :12 runs during peak only (6-9)
+            if [ "$H" -ge 6 ] && [ "$H" -le 9 ]; then SHOULD_RUN="true"; fi
+          fi
+
+          echo "UTC time: ${H}:${M}, slot: ${SLOT}, should_run: ${SHOULD_RUN}"
+          echo "should_run=${SHOULD_RUN}" >> "$GITHUB_OUTPUT"
+
   screenshot-primary:
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.job == 'primary' || inputs.job == 'both'))
+    needs: check-schedule
+    if: |
+      (github.event_name == 'schedule' && needs.check-schedule.outputs.should_run == 'true') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.job == 'primary' || inputs.job == 'both'))
 
     steps:
     - name: Checkout repository
@@ -79,7 +116,7 @@ jobs:
 
     - name: Convert to TRMNL format
       run: |
-        # 1-bit monochrome PNG per TRMNL spec + community best practices
+        # 1-bit monochrome PNG per TRMNL spec
         # https://docs.trmnl.com/go/diy/imagemagick-guide
         convert trmnl-screenshot-raw.png \
           -monochrome -colors 2 -depth 1 \
@@ -92,11 +129,11 @@ jobs:
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
+        git pull --rebase origin main
         git add trmnl-screenshot.png
 
         if ! git diff --cached --quiet; then
           git commit -m "Update screenshot 1 $(date +'%Y-%m-%d %H:%M:%S')"
-          git pull --rebase origin main
           git push
           echo "Screenshot updated and committed"
         else
@@ -105,8 +142,10 @@ jobs:
 
   screenshot-secondary:
     runs-on: ubuntu-latest
-    needs: screenshot-primary
-    if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.job == 'secondary' || inputs.job == 'both')))
+    needs: check-schedule
+    if: |
+      (github.event_name == 'schedule' && needs.check-schedule.outputs.should_run == 'true') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.job == 'secondary' || inputs.job == 'both'))
 
     steps:
     - name: Checkout repository
@@ -155,11 +194,11 @@ jobs:
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
+        git pull --rebase origin main
         git add screenshot-2.png
 
         if ! git diff --cached --quiet; then
           git commit -m "Update screenshot 2 $(date +'%Y-%m-%d %H:%M:%S')"
-          git pull --rebase origin main
           git push
           echo "Screenshot updated and committed"
         else
