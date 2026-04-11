@@ -77,8 +77,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: check-schedule
     if: |
-      (github.event_name == 'schedule' && needs.check-schedule.outputs.should_run == 'true') ||
-      (github.event_name == 'workflow_dispatch' && (inputs.job == 'primary' || inputs.job == 'both'))
+      always() &&
+      ((github.event_name == 'schedule' && needs.check-schedule.outputs.should_run == 'true') ||
+       (github.event_name == 'workflow_dispatch' && (inputs.job == 'primary' || inputs.job == 'both')))
 
     steps:
     - name: Checkout repository
@@ -144,8 +145,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: check-schedule
     if: |
-      (github.event_name == 'schedule' && needs.check-schedule.outputs.should_run == 'true') ||
-      (github.event_name == 'workflow_dispatch' && (inputs.job == 'secondary' || inputs.job == 'both'))
+      always() &&
+      ((github.event_name == 'schedule' && needs.check-schedule.outputs.should_run == 'true') ||
+       (github.event_name == 'workflow_dispatch' && (inputs.job == 'secondary' || inputs.job == 'both')))
 
     steps:
     - name: Checkout repository
