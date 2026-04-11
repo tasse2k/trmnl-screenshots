@@ -8,19 +8,15 @@ on:
 
   workflow_dispatch:
     inputs:
-      url:
-        description: 'URL to screenshot (optional - overrides default)'
-        required: false
-        type: string
       job:
-        description: 'Which job to run (primary or secondary)'
+        description: 'Which location to run (or all)'
         required: false
         type: choice
         options:
-          - primary
-          - secondary
-          - both
-        default: both
+          - all
+          - barcelona
+          - blankenfelde
+        default: all
 
 concurrency:
   group: screenshot
@@ -36,7 +32,6 @@ jobs:
       - name: Decide if this slot should run
         id: decide
         run: |
-          # Current UTC hour and minute
           H=$(date -u +%-H)
           M=$(date -u +%-M)
 
@@ -49,7 +44,6 @@ jobs:
 
           SHOULD_RUN="false"
 
-          # Round minute to nearest slot
           if [ "$M" -ge 10 ] && [ "$M" -le 14 ]; then SLOT=12;
           elif [ "$M" -ge 25 ] && [ "$M" -le 29 ]; then SLOT=27;
           elif [ "$M" -ge 40 ] && [ "$M" -le 44 ]; then SLOT=42;
@@ -57,40 +51,61 @@ jobs:
           else SLOT=-1; fi
 
           if [ "$SLOT" -eq 57 ]; then
-            # :57 runs every hour (all periods)
             SHOULD_RUN="true"
           elif [ "$SLOT" -eq 27 ]; then
-            # :27 runs during waking (4-6), peak (5-9), daytime (9-20)
             if [ "$H" -ge 4 ] && [ "$H" -le 20 ]; then SHOULD_RUN="true"; fi
           elif [ "$SLOT" -eq 42 ]; then
-            # :42 runs during peak only (5-8)
             if [ "$H" -ge 5 ] && [ "$H" -le 8 ]; then SHOULD_RUN="true"; fi
           elif [ "$SLOT" -eq 12 ]; then
-            # :12 runs during peak only (6-9)
             if [ "$H" -ge 6 ] && [ "$H" -le 9 ]; then SHOULD_RUN="true"; fi
           fi
 
           echo "UTC time: ${H}:${M}, slot: ${SLOT}, should_run: ${SHOULD_RUN}"
           echo "should_run=${SHOULD_RUN}" >> "$GITHUB_OUTPUT"
 
-  screenshot-primary:
+  screenshot:
     runs-on: ubuntu-latest
     needs: check-schedule
     if: |
       always() &&
       ((github.event_name == 'schedule' && needs.check-schedule.outputs.should_run == 'true') ||
-       (github.event_name == 'workflow_dispatch' && (inputs.job == 'primary' || inputs.job == 'both')))
+       github.event_name == 'workflow_dispatch')
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ---- ADD NEW CITIES HERE ----
+          # slug: used as filename ({slug}.png) and Netlify endpoint (/img/{slug})
+          # url:  the weather dashboard URL to screenshot
+          - slug: barcelona
+            url: https://wetterdirect.netlify.app/barcelona
+          - slug: blankenfelde
+            url: https://wetterdirect.netlify.app/blankenfelde
 
     steps:
+    - name: Check if this location should run
+      id: filter
+      if: github.event_name == 'workflow_dispatch'
+      run: |
+        if [ "${{ inputs.job }}" = "all" ] || [ "${{ inputs.job }}" = "${{ matrix.slug }}" ]; then
+          echo "run=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "run=false" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Checkout repository
+      if: github.event_name == 'schedule' || steps.filter.outputs.run != 'false'
       uses: actions/checkout@v4
 
     - name: Setup Node.js
+      if: github.event_name == 'schedule' || steps.filter.outputs.run != 'false'
       uses: actions/setup-node@v4
       with:
         node-version: '22'
 
     - name: Cache Playwright browsers
+      if: github.event_name == 'schedule' || steps.filter.outputs.run != 'false'
       uses: actions/cache@v4
       with:
         path: ~/.cache/ms-playwright
@@ -99,107 +114,47 @@ jobs:
           ${{ runner.os }}-playwright-
 
     - name: Install dependencies
+      if: github.event_name == 'schedule' || steps.filter.outputs.run != 'false'
       run: |
         npm init -y
         npm install playwright
 
     - name: Install Playwright Chromium
+      if: github.event_name == 'schedule' || steps.filter.outputs.run != 'false'
       run: npx playwright install chromium
 
     - name: Install ImageMagick
+      if: github.event_name == 'schedule' || steps.filter.outputs.run != 'false'
       run: command -v convert >/dev/null || (sudo apt-get update && sudo apt-get install -y imagemagick)
 
     - name: Take screenshot
+      if: github.event_name == 'schedule' || steps.filter.outputs.run != 'false'
       env:
-        SCREENSHOT_URL: ${{ inputs.url || 'https://wetterdirect.netlify.app/dashboard' }}
-        OUTPUT_FILE: 'trmnl-screenshot.png'
+        SCREENSHOT_URL: ${{ matrix.url }}
+        OUTPUT_FILE: '${{ matrix.slug }}.png'
       run: node screenshot.js
 
     - name: Convert to TRMNL format
+      if: github.event_name == 'schedule' || steps.filter.outputs.run != 'false'
       run: |
         # 1-bit monochrome PNG per TRMNL spec
         # https://docs.trmnl.com/go/diy/imagemagick-guide
-        convert trmnl-screenshot-raw.png \
+        convert ${{ matrix.slug }}-raw.png \
           -monochrome -colors 2 -depth 1 \
           -strip \
-          png:trmnl-screenshot.png
+          png:${{ matrix.slug }}.png
         echo "Converted to TRMNL format:"
-        identify trmnl-screenshot.png
+        identify ${{ matrix.slug }}.png
 
     - name: Commit screenshot
+      if: github.event_name == 'schedule' || steps.filter.outputs.run != 'false'
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git add trmnl-screenshot.png
+        git add ${{ matrix.slug }}.png
 
         if ! git diff --cached --quiet; then
-          git commit -m "Update screenshot 1 $(date +'%Y-%m-%d %H:%M:%S')"
-          git pull --rebase origin main
-          git push
-          echo "Screenshot updated and committed"
-        else
-          echo "No changes to screenshot"
-        fi
-
-  screenshot-secondary:
-    runs-on: ubuntu-latest
-    needs: check-schedule
-    if: |
-      always() &&
-      ((github.event_name == 'schedule' && needs.check-schedule.outputs.should_run == 'true') ||
-       (github.event_name == 'workflow_dispatch' && (inputs.job == 'secondary' || inputs.job == 'both')))
-
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-
-    - name: Cache Playwright browsers
-      uses: actions/cache@v4
-      with:
-        path: ~/.cache/ms-playwright
-        key: ${{ runner.os }}-playwright-${{ hashFiles('screenshot.js') }}
-        restore-keys: |
-          ${{ runner.os }}-playwright-
-
-    - name: Install dependencies
-      run: |
-        npm init -y
-        npm install playwright
-
-    - name: Install Playwright Chromium
-      run: npx playwright install chromium
-
-    - name: Install ImageMagick
-      run: command -v convert >/dev/null || (sudo apt-get update && sudo apt-get install -y imagemagick)
-
-    - name: Take screenshot
-      env:
-        SCREENSHOT_URL: 'https://wetterdirect.netlify.app/blankenfelde'
-        OUTPUT_FILE: 'screenshot-2.png'
-      run: node screenshot.js
-
-    - name: Convert to TRMNL format
-      run: |
-        convert screenshot-2-raw.png \
-          -monochrome -colors 2 -depth 1 \
-          -strip \
-          png:screenshot-2.png
-        echo "Converted to TRMNL format:"
-        identify screenshot-2.png
-
-    - name: Commit screenshot
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add screenshot-2.png
-
-        if ! git diff --cached --quiet; then
-          git commit -m "Update screenshot 2 $(date +'%Y-%m-%d %H:%M:%S')"
+          git commit -m "Update ${{ matrix.slug }} $(date +'%Y-%m-%d %H:%M:%S')"
           git pull --rebase origin main
           git push
           echo "Screenshot updated and committed"
