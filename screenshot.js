@@ -52,9 +52,28 @@ const fs = require('fs');
       clip: { x: 0, y: 0, width: 800, height: 480 }
     });
 
+    // Extract LAST UPDATE time from the DOM
+    const lastUpdate = await page.evaluate(() => {
+      // Look for elements containing "UPDATE" text
+      const all = document.querySelectorAll('*');
+      for (const el of all) {
+        const text = el.textContent || '';
+        if (/update/i.test(text)) {
+          const match = text.match(/(\d{1,2}:\d{2})/);
+          if (match) return match[1];
+        }
+      }
+      return null;
+    });
+
     // Write raw PNG for ImageMagick processing
     fs.writeFileSync(rawFile, screenshot);
     console.log(`Raw screenshot saved as ${rawFile}`);
+
+    // Write extracted timestamp for the workflow to pick up
+    const metaFile = outputFile.replace(/\.png$/, '-meta.json');
+    fs.writeFileSync(metaFile, JSON.stringify({ lastUpdate }));
+    console.log(`Last update time: ${lastUpdate || 'not found'}`);
 
   } catch (error) {
     console.error('Error taking screenshot:', error);

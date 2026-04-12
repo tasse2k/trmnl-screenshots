@@ -107,22 +107,22 @@ jobs:
           png:${{ env.SLUG }}.png
         identify ${{ env.SLUG }}.png
 
-    - name: Extract LAST UPDATE via OCR
-      id: ocr
+    - name: Extract LAST UPDATE time
+      id: meta
       run: |
-        convert ${{ env.SLUG }}-raw.png -resize 1600x960 -threshold 50% /tmp/ocr-full.png
-        TEXT=$(tesseract /tmp/ocr-full.png - --psm 6 2>/dev/null || echo "")
-        LAST_UPDATE=$(echo "$TEXT" | grep -iA1 "UPDATE" | grep -oP '\d{1,2}:\d{2}' | head -1)
-        if [ -z "$LAST_UPDATE" ]; then
-          LAST_UPDATE=$(echo "$TEXT" | head -3 | grep -oP '\d{1,2}:\d{2}' | head -1)
+        META="${{ env.SLUG }}-meta.json"
+        if [ -f "$META" ]; then
+          LAST_UPDATE=$(python3 -c "import json; print(json.load(open('$META')).get('lastUpdate') or '')")
+        else
+          LAST_UPDATE=""
         fi
-        echo "OCR result: $LAST_UPDATE"
+        echo "Last update: ${LAST_UPDATE:-none}"
         echo "last_update=${LAST_UPDATE}" >> "$GITHUB_OUTPUT"
 
     - name: Append to log
       run: |
         SIZE=$(stat -c%s "${{ env.SLUG }}.png" 2>/dev/null || echo 0)
-        LU="${{ steps.ocr.outputs.last_update }}"
+        LU="${{ steps.meta.outputs.last_update }}"
         python3 -c "
         import json, os
         f = 'log.json'
@@ -216,22 +216,22 @@ jobs:
           png:${{ env.SLUG }}.png
         identify ${{ env.SLUG }}.png
 
-    - name: Extract LAST UPDATE via OCR
-      id: ocr
+    - name: Extract LAST UPDATE time
+      id: meta
       run: |
-        convert ${{ env.SLUG }}-raw.png -resize 1600x960 -threshold 50% /tmp/ocr-full.png
-        TEXT=$(tesseract /tmp/ocr-full.png - --psm 6 2>/dev/null || echo "")
-        LAST_UPDATE=$(echo "$TEXT" | grep -iA1 "UPDATE" | grep -oP '\d{1,2}:\d{2}' | head -1)
-        if [ -z "$LAST_UPDATE" ]; then
-          LAST_UPDATE=$(echo "$TEXT" | head -3 | grep -oP '\d{1,2}:\d{2}' | head -1)
+        META="${{ env.SLUG }}-meta.json"
+        if [ -f "$META" ]; then
+          LAST_UPDATE=$(python3 -c "import json; print(json.load(open('$META')).get('lastUpdate') or '')")
+        else
+          LAST_UPDATE=""
         fi
-        echo "OCR result: $LAST_UPDATE"
+        echo "Last update: ${LAST_UPDATE:-none}"
         echo "last_update=${LAST_UPDATE}" >> "$GITHUB_OUTPUT"
 
     - name: Append to log
       run: |
         SIZE=$(stat -c%s "${{ env.SLUG }}.png" 2>/dev/null || echo 0)
-        LU="${{ steps.ocr.outputs.last_update }}"
+        LU="${{ steps.meta.outputs.last_update }}"
         python3 -c "
         import json, os
         f = 'log.json'
