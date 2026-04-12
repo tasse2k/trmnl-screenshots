@@ -1,1 +1,11 @@
-[]
+[
+  {
+    "ts": "2026-04-12T14:23:59Z",
+    "slug": "barcelona",
+    "ok": true,
+    "size": 5629,
+    "lastUpdate": null,
+    "runId": "24308838253",
+    "elapsed": 0
+  }
+]
