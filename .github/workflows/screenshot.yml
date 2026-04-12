@@ -3,21 +3,19 @@ name: Automated Screenshots
 # ============================================================
 # ADDING A NEW CITY
 # ============================================================
-# 1. Add a new job below (copy screenshot-barcelona, rename slug/url/output)
+# 1. Add a new job below (copy screenshot-barcelona, rename slug/url)
 # 2. Chain it: needs: screenshot-<previous>
-# 3. Add the slug to KNOWN_LOCATIONS in wetterstation repo:
+# 3. Add the slug to KNOWN_LOCATIONS / TRMNL_LOCATIONS in wetterstation:
 #    - netlify/functions/screenshot.js
 #    - netlify/functions/redirect.js
-# 4. Add location config in wetterstation: locations/<slug>/config.json
-# 5. Add the dashboard route in wetterstation: netlify.toml
+# 4. Add location config: wetterstation/locations/<slug>/config.json
+# 5. Add dashboard route: wetterstation/netlify.toml
 # 6. Create TRMNL private plugin with polling URL:
 #    https://wetterdirect.netlify.app/trmnl/<slug>
 # ============================================================
 
 on:
   schedule:
-    # Single entry every 15 min — frequency logic handled in the "check" job.
-    # One cron entry avoids GitHub throttling that occurred with 9 separate entries.
     - cron: '12,27,42,57 * * * *'
 
   workflow_dispatch:
@@ -48,13 +46,6 @@ jobs:
         run: |
           H=$(date -u +%-H)
           M=$(date -u +%-M)
-
-          # Schedule (all times UTC, covering CEST UTC+2 and CET UTC+1):
-          #   Night   (23-5 UTC):  hourly    → only :57
-          #   Waking  (4-6 UTC):   every 30m → :27, :57
-          #   Peak    (5-9 UTC):   every 15m → :12, :27, :42, :57
-          #   Daytime (9-20 UTC):  every 30m → :27, :57
-          #   Wind-down (20-23):   hourly    → :57
 
           SHOULD_RUN="false"
 
@@ -116,19 +107,71 @@ jobs:
           png:${{ env.SLUG }}.png
         identify ${{ env.SLUG }}.png
 
+    - name: Extract LAST UPDATE via OCR
+      id: ocr
+      run: |
+        convert ${{ env.SLUG }}-raw.png -crop 250x35+0+28 +repage \
+          -resize 500x70 -threshold 50% /tmp/ocr-crop.png
+        TEXT=$(tesseract /tmp/ocr-crop.png - --psm 6 2>/dev/null || echo "")
+        LAST_UPDATE=$(echo "$TEXT" | grep -oP '\d{1,2}:\d{2}' | head -1)
+        echo "OCR: $TEXT -> $LAST_UPDATE"
+        echo "last_update=${LAST_UPDATE}" >> "$GITHUB_OUTPUT"
+
+    - name: Append to log
+      run: |
+        SIZE=$(stat -c%s "${{ env.SLUG }}.png" 2>/dev/null || echo 0)
+        LU="${{ steps.ocr.outputs.last_update }}"
+        python3 -c "
+        import json, os
+        f = 'log.json'
+        log = json.load(open(f)) if os.path.exists(f) else []
+        log.append({
+          'ts': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
+          'slug': '${{ env.SLUG }}',
+          'ok': True,
+          'size': $SIZE,
+          'lastUpdate': '$LU' if '$LU' else None,
+          'runId': '${{ github.run_id }}',
+          'elapsed': $SECONDS
+        })
+        json.dump(log[-500:], open(f, 'w'), indent=2)
+        "
+
     - name: Commit
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git add ${{ env.SLUG }}.png
+        git add ${{ env.SLUG }}.png log.json
         if ! git diff --cached --quiet; then
           git commit -m "Update ${{ env.SLUG }} $(date +'%Y-%m-%d %H:%M:%S')"
           git pull --rebase origin main
           git push
-          echo "✅ ${{ env.SLUG }} updated"
         else
-          echo "⏭️ ${{ env.SLUG }} unchanged"
+          echo "unchanged"
         fi
+
+    - name: Log failure
+      if: failure()
+      run: |
+        python3 -c "
+        import json, os
+        f = 'log.json'
+        log = json.load(open(f)) if os.path.exists(f) else []
+        log.append({
+          'ts': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
+          'slug': '${{ env.SLUG }}',
+          'ok': False,
+          'size': 0,
+          'lastUpdate': None,
+          'runId': '${{ github.run_id }}',
+          'elapsed': $SECONDS
+        })
+        json.dump(log[-500:], open(f, 'w'), indent=2)
+        "
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add log.json
+        git diff --cached --quiet || (git commit -m "Log failure ${{ env.SLUG }}" && git pull --rebase origin main && git push)
 
   # ---- BLANKENFELDE (runs after barcelona) ----
   screenshot-blankenfelde:
@@ -169,16 +212,68 @@ jobs:
           png:${{ env.SLUG }}.png
         identify ${{ env.SLUG }}.png
 
+    - name: Extract LAST UPDATE via OCR
+      id: ocr
+      run: |
+        convert ${{ env.SLUG }}-raw.png -crop 250x35+0+28 +repage \
+          -resize 500x70 -threshold 50% /tmp/ocr-crop.png
+        TEXT=$(tesseract /tmp/ocr-crop.png - --psm 6 2>/dev/null || echo "")
+        LAST_UPDATE=$(echo "$TEXT" | grep -oP '\d{1,2}:\d{2}' | head -1)
+        echo "OCR: $TEXT -> $LAST_UPDATE"
+        echo "last_update=${LAST_UPDATE}" >> "$GITHUB_OUTPUT"
+
+    - name: Append to log
+      run: |
+        SIZE=$(stat -c%s "${{ env.SLUG }}.png" 2>/dev/null || echo 0)
+        LU="${{ steps.ocr.outputs.last_update }}"
+        python3 -c "
+        import json, os
+        f = 'log.json'
+        log = json.load(open(f)) if os.path.exists(f) else []
+        log.append({
+          'ts': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
+          'slug': '${{ env.SLUG }}',
+          'ok': True,
+          'size': $SIZE,
+          'lastUpdate': '$LU' if '$LU' else None,
+          'runId': '${{ github.run_id }}',
+          'elapsed': $SECONDS
+        })
+        json.dump(log[-500:], open(f, 'w'), indent=2)
+        "
+
     - name: Commit
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git add ${{ env.SLUG }}.png
+        git add ${{ env.SLUG }}.png log.json
         if ! git diff --cached --quiet; then
           git commit -m "Update ${{ env.SLUG }} $(date +'%Y-%m-%d %H:%M:%S')"
           git pull --rebase origin main
           git push
-          echo "✅ ${{ env.SLUG }} updated"
         else
-          echo "⏭️ ${{ env.SLUG }} unchanged"
+          echo "unchanged"
         fi
+
+    - name: Log failure
+      if: failure()
+      run: |
+        python3 -c "
+        import json, os
+        f = 'log.json'
+        log = json.load(open(f)) if os.path.exists(f) else []
+        log.append({
+          'ts': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
+          'slug': '${{ env.SLUG }}',
+          'ok': False,
+          'size': 0,
+          'lastUpdate': None,
+          'runId': '${{ github.run_id }}',
+          'elapsed': $SECONDS
+        })
+        json.dump(log[-500:], open(f, 'w'), indent=2)
+        "
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add log.json
+        git diff --cached --quiet || (git commit -m "Log failure ${{ env.SLUG }}" && git pull --rebase origin main && git push)
