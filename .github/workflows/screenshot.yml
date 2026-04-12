@@ -110,11 +110,13 @@ jobs:
     - name: Extract LAST UPDATE via OCR
       id: ocr
       run: |
-        convert ${{ env.SLUG }}-raw.png -crop 250x35+0+28 +repage \
-          -resize 500x70 -threshold 50% /tmp/ocr-crop.png
-        TEXT=$(tesseract /tmp/ocr-crop.png - --psm 6 2>/dev/null || echo "")
-        LAST_UPDATE=$(echo "$TEXT" | grep -oP '\d{1,2}:\d{2}' | head -1)
-        echo "OCR: $TEXT -> $LAST_UPDATE"
+        convert ${{ env.SLUG }}-raw.png -resize 1600x960 -threshold 50% /tmp/ocr-full.png
+        TEXT=$(tesseract /tmp/ocr-full.png - --psm 6 2>/dev/null || echo "")
+        LAST_UPDATE=$(echo "$TEXT" | grep -iA1 "UPDATE" | grep -oP '\d{1,2}:\d{2}' | head -1)
+        if [ -z "$LAST_UPDATE" ]; then
+          LAST_UPDATE=$(echo "$TEXT" | head -3 | grep -oP '\d{1,2}:\d{2}' | head -1)
+        fi
+        echo "OCR result: $LAST_UPDATE"
         echo "last_update=${LAST_UPDATE}" >> "$GITHUB_OUTPUT"
 
     - name: Append to log
@@ -217,11 +219,13 @@ jobs:
     - name: Extract LAST UPDATE via OCR
       id: ocr
       run: |
-        convert ${{ env.SLUG }}-raw.png -crop 250x35+0+28 +repage \
-          -resize 500x70 -threshold 50% /tmp/ocr-crop.png
-        TEXT=$(tesseract /tmp/ocr-crop.png - --psm 6 2>/dev/null || echo "")
-        LAST_UPDATE=$(echo "$TEXT" | grep -oP '\d{1,2}:\d{2}' | head -1)
-        echo "OCR: $TEXT -> $LAST_UPDATE"
+        convert ${{ env.SLUG }}-raw.png -resize 1600x960 -threshold 50% /tmp/ocr-full.png
+        TEXT=$(tesseract /tmp/ocr-full.png - --psm 6 2>/dev/null || echo "")
+        LAST_UPDATE=$(echo "$TEXT" | grep -iA1 "UPDATE" | grep -oP '\d{1,2}:\d{2}' | head -1)
+        if [ -z "$LAST_UPDATE" ]; then
+          LAST_UPDATE=$(echo "$TEXT" | head -3 | grep -oP '\d{1,2}:\d{2}' | head -1)
+        fi
+        echo "OCR result: $LAST_UPDATE"
         echo "last_update=${LAST_UPDATE}" >> "$GITHUB_OUTPUT"
 
     - name: Append to log
