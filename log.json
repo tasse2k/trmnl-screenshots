@@ -2095,5 +2095,14 @@
     "lastUpdate": "14:39",
     "runId": "24629276773",
     "elapsed": 0
+  },
+  {
+    "ts": "2026-04-19T13:46:40Z",
+    "slug": "barcelona",
+    "ok": true,
+    "size": 5512,
+    "lastUpdate": "15:46",
+    "runId": "24630554989",
+    "elapsed": 0
   }
 ]
