@@ -1,14 +1,5 @@
 [
   {
-    "ts": "2026-07-23T21:59:45Z",
-    "slug": "barcelona",
-    "ok": true,
-    "size": 5715,
-    "lastUpdate": "23:59",
-    "runId": "30048239938",
-    "elapsed": 0
-  },
-  {
     "ts": "2026-07-23T22:00:31Z",
     "slug": "blankenfelde",
     "ok": true,
@@ -4497,6 +4488,15 @@
     "size": 5670,
     "lastUpdate": "12:52",
     "runId": "31589245357",
+    "elapsed": 0
+  },
+  {
+    "ts": "2026-08-12T11:39:34Z",
+    "slug": "barcelona",
+    "ok": true,
+    "size": 5470,
+    "lastUpdate": "13:39",
+    "runId": "31592763898",
     "elapsed": 0
   }
 ]
