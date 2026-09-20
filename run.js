@@ -7,8 +7,9 @@
 //   1. renders + screenshots via screenshot.js (UNCHANGED, not touched here)
 //   2. converts to 1-bit (default) or 2-bit (opt-in) PNG with ImageMagick
 //   3. validates geometry (800x480) and bit depth with `identify`
-//   4. uploads to Netlify Blobs at the `-next` key (NEVER the live key)
-//   5. reads the `-next` key back and asserts byte-identical + Content-Length
+//   4. uploads to Netlify Blobs at the live `{slug}` key
+//   5. reads /img/{slug} back and asserts the bytes are byte-identical
+//      (Content-Length is a warning: Netlify always responds chunked)
 //
 // Per-city failures are caught and logged; they do not stop other cities.
 // The process exits non-zero if any (non-skipped) city failed.
@@ -166,7 +167,7 @@ function validateImage(outFile, expectedDepth) {
 }
 
 async function uploadNext(base, slug, buffer, token) {
-  const url = `${base}/upload/${slug}-next`;
+  const url = `${base}/upload/${slug}`;
   const res = await fetch(url, {
     method: 'POST',
     headers: {
@@ -185,7 +186,7 @@ async function uploadNext(base, slug, buffer, token) {
 }
 
 async function verifyReadback(base, slug, uploaded) {
-  const url = `${base}/img/${slug}-next`;
+  const url = `${base}/img/${slug}`;
   // Accept-Encoding: identity mimics the TRMNL device, which does not
   // negotiate compression. Without it undici sends
   // `accept-encoding: gzip, deflate, br`; if the edge then compresses,
@@ -255,7 +256,9 @@ async function runCity(slug, cityConfig, opts) {
   const depth = resolveDepth(cityConfig, depthOverride);
   const names = screenshotPaths(slug);
   const rawFile = path.join(REPO_ROOT, names.rawFile);
-  const outFile = path.join(REPO_ROOT, `${slug}-next.png`);
+  // Local scratch file only -- never a blob key. Named distinctly from the
+  // committed `{slug}.png` fallback so a stray write cannot clobber it.
+  const outFile = path.join(REPO_ROOT, `${slug}-out.png`);
   const metaFile = path.join(REPO_ROOT, names.metaFile);
   const dashboardUrl = `${dashboardBase}/${slug}`;
 

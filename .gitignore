@@ -4,5 +4,6 @@ node_modules/
 # committed by the new pipeline -- uploads go to Netlify Blobs, not git.
 *-raw.png
 *-raw-meta.json
+*-out.png
 *-next.png
 *-meta.json
