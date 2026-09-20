@@ -114,6 +114,23 @@ function run(cmd, args, opts = {}) {
   return result;
 }
 
+// screenshot.js treats OUTPUT_FILE as a BASE name and derives its own outputs
+// from it (see screenshot.js: `outputFile.replace(/\.png$/, ...)`):
+//   `X.png`  ->  `X-raw.png`   the actual screenshot
+//   `X.png`  ->  `X-meta.json` the extracted LAST UPDATE time
+// It never writes OUTPUT_FILE itself. Callers must therefore pass `{slug}.png`,
+// NOT `{slug}-raw.png` -- the latter double-suffixes to `{slug}-raw-raw.png`
+// and the convert step then fails on a missing file. Keep this derivation in
+// one place so the two files cannot drift apart again.
+function screenshotPaths(slug) {
+  const outputFile = `${slug}.png`;
+  return {
+    outputFile,
+    rawFile: outputFile.replace(/\.png$/, '-raw.png'),
+    metaFile: outputFile.replace(/\.png$/, '-meta.json'),
+  };
+}
+
 function takeScreenshot(slug, dashboardUrl, outputFile) {
   const result = spawnSync('node', ['screenshot.js'], {
     cwd: REPO_ROOT,
@@ -210,13 +227,14 @@ async function runCity(slug, cityConfig, opts) {
   }
 
   const depth = resolveDepth(cityConfig, depthOverride);
-  const rawFile = path.join(REPO_ROOT, `${slug}-raw.png`);
+  const names = screenshotPaths(slug);
+  const rawFile = path.join(REPO_ROOT, names.rawFile);
   const outFile = path.join(REPO_ROOT, `${slug}-next.png`);
-  const metaFile = path.join(REPO_ROOT, `${slug}-raw-meta.json`);
+  const metaFile = path.join(REPO_ROOT, names.metaFile);
   const dashboardUrl = `${dashboardBase}/${slug}`;
 
   try {
-    takeScreenshot(slug, dashboardUrl, `${slug}-raw.png`);
+    takeScreenshot(slug, dashboardUrl, names.outputFile);
     convertImage(rawFile, outFile, depth);
     validateImage(outFile, depth);
 
@@ -321,7 +339,7 @@ async function main() {
 
 module.exports = {
   loadRegistry, selectCities, resolveDepth, convertImage, validateImage,
-  uploadNext, verifyReadback, runCity, main,
+  uploadNext, verifyReadback, runCity, main, screenshotPaths,
 };
 
 if (require.main === module) {
