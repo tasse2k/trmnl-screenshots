@@ -1,0 +1,8 @@
+node_modules/
+
+# Per-run scratch files produced by screenshot.js / run.js. Nothing here is
+# committed by the new pipeline -- uploads go to Netlify Blobs, not git.
+*-raw.png
+*-raw-meta.json
+*-next.png
+*-meta.json

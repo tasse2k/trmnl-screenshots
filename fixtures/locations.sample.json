@@ -1,0 +1,11 @@
+{
+  "_comment": "Local fixture matching the NEW /locations shape documented in wetterstation's T2 ticket (docs/tickets/T2-registry-and-schedule.md). As of writing this, https://wetterdirect.netlify.app/locations still returns the OLD shape (a bare array), so run.js is tested against this file via LOCATIONS_FIXTURE instead of the live endpoint. Delete this comment key if you ever load this file as a real registry -- it is not part of the T2 contract.",
+  "default": "barcelona",
+  "locations": {
+    "barcelona":    { "trmnl": true,  "tz": "Europe/Madrid",  "quiet": ["01:00", "05:30"] },
+    "blankenfelde": { "trmnl": true,  "tz": "Europe/Berlin",  "quiet": ["01:00", "05:30"] },
+    "bilbao":       { "trmnl": false, "tz": "Europe/Madrid" },
+    "london":       { "trmnl": false, "tz": "Europe/London" },
+    "newyork":      { "trmnl": false, "tz": "America/New_York" }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "trmnl-screenshots",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Screenshot runner for the METEOframe TRMNL dashboards",
+  "main": "run.js",
+  "scripts": {
+    "test": "node --test lib/*.test.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "playwright": "1.63.0"
+  }
+}

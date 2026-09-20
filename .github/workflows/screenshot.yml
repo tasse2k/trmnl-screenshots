@@ -3,283 +3,94 @@ name: Automated Screenshots
 # ============================================================
 # ADDING A NEW CITY
 # ============================================================
-# 1. Add a new job below (copy screenshot-barcelona, rename slug/url)
-# 2. Chain it: needs: screenshot-<previous>
-# 3. Add the slug to KNOWN_LOCATIONS / TRMNL_LOCATIONS in wetterstation:
-#    - netlify/functions/screenshot.js
-#    - netlify/functions/redirect.js
-# 4. Add location config: wetterstation/locations/<slug>/config.json
-# 5. Add dashboard route: wetterstation/netlify.toml
-# 6. Create TRMNL private plugin with polling URL:
-#    https://wetterdirect.netlify.app/trmnl/<slug>
+# There is nothing to change here anymore. The city list, timezone and
+# quiet hours all come from wetterstation's /locations endpoint (T2
+# registry). To add a city:
+#   1. Add it to wetterstation's locations.json with "trmnl": true
+#   2. Add wetterstation/locations/<slug>/config.json
+#   3. Add a dashboard route in wetterstation/netlify.toml
+#   4. Create a TRMNL private plugin pointing at
+#      https://wetterdirect.netlify.app/img/<slug>
+# The next dispatch of this workflow picks the new city up automatically.
 # ============================================================
+#
+# Trigger: workflow_dispatch ONLY. There is no `schedule:` block -- that
+# was the thing that was broken (GitHub's cron scheduler is best-effort
+# and was silently dropping/delaying most runs). An external caller
+# (Netlify Scheduled Function, T5) hits the workflow_dispatch API on a
+# tight interval instead; workflow_dispatch is picked up near-instantly.
+#
+# Quiet hours are decided PER CITY, IN ITS OWN TIMEZONE, inside run.js
+# (lib/schedule.js) -- not here. A single workflow-level gate cannot
+# express that.
 
 on:
-  schedule:
-    - cron: '12,27,42,57 * * * *'
-
   workflow_dispatch:
     inputs:
-      job:
-        description: 'Which location to run (or all)'
+      only:
+        description: 'Run only this location slug (leave empty to run every TRMNL-enabled city)'
+        required: false
+        type: string
+        default: ''
+      depth:
+        description: 'Force conversion depth for every city this run (leave empty to use the registry/default). depth=2 requires TRMNL OG firmware >= 1.6.x.'
         required: false
         type: choice
         options:
-          - all
-          - barcelona
-          - blankenfelde
-        default: all
+          - ''
+          - '1'
+          - '2'
+        default: ''
+
+permissions:
+  contents: read
 
 concurrency:
   group: screenshot
   cancel-in-progress: false
 
 jobs:
-  check-schedule:
+  screenshot:
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule'
-    outputs:
-      should_run: ${{ steps.decide.outputs.should_run }}
     steps:
-      - name: Decide if this slot should run
-        id: decide
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Resolve pinned Playwright version
+        id: pw
         run: |
-          H=$(date -u +%-H)
-          M=$(date -u +%-M)
+          echo "version=$(node -p "require('./package.json').dependencies.playwright")" >> "$GITHUB_OUTPUT"
 
-          SHOULD_RUN="false"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          # Keyed on the pinned Playwright version (package.json), not on
+          # hashFiles('screenshot.js') -- that key never changed when
+          # Playwright itself was bumped, so a stale browser binary from an
+          # older Playwright version could silently keep being reused.
+          key: ${{ runner.os }}-playwright-${{ steps.pw.outputs.version }}
+          restore-keys: ${{ runner.os }}-playwright-
 
-          if [ "$M" -ge 10 ] && [ "$M" -le 14 ]; then SLOT=12;
-          elif [ "$M" -ge 25 ] && [ "$M" -le 29 ]; then SLOT=27;
-          elif [ "$M" -ge 40 ] && [ "$M" -le 44 ]; then SLOT=42;
-          elif [ "$M" -ge 55 ] || [ "$M" -le 59 ]; then SLOT=57;
-          else SLOT=-1; fi
+      - name: Install Playwright browser (chromium)
+        run: npx playwright install --with-deps chromium
 
-          if [ "$SLOT" -eq 57 ]; then
-            SHOULD_RUN="true"
-          elif [ "$SLOT" -eq 27 ]; then
-            if [ "$H" -ge 4 ] && [ "$H" -le 20 ]; then SHOULD_RUN="true"; fi
-          elif [ "$SLOT" -eq 42 ]; then
-            if [ "$H" -ge 5 ] && [ "$H" -le 8 ]; then SHOULD_RUN="true"; fi
-          elif [ "$SLOT" -eq 12 ]; then
-            if [ "$H" -ge 6 ] && [ "$H" -le 9 ]; then SHOULD_RUN="true"; fi
-          fi
+      - name: Install ImageMagick
+        run: command -v convert >/dev/null || (sudo apt-get update && sudo apt-get install -y imagemagick)
 
-          echo "UTC time: ${H}:${M}, slot: ${SLOT}, should_run: ${SHOULD_RUN}"
-          echo "should_run=${SHOULD_RUN}" >> "$GITHUB_OUTPUT"
-
-  # ---- BARCELONA (runs first) ----
-  screenshot-barcelona:
-    runs-on: ubuntu-latest
-    needs: check-schedule
-    if: |
-      always() &&
-      ((github.event_name == 'schedule' && needs.check-schedule.outputs.should_run == 'true') ||
-       (github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'barcelona')))
-    env:
-      SLUG: barcelona
-      SCREENSHOT_URL: https://wetterdirect.netlify.app/barcelona
-
-    steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-    - uses: actions/cache@v4
-      with:
-        path: ~/.cache/ms-playwright
-        key: ${{ runner.os }}-playwright-${{ hashFiles('screenshot.js') }}
-        restore-keys: ${{ runner.os }}-playwright-
-    - run: npm init -y && npm install playwright
-    - run: npx playwright install chromium
-    - name: Install ImageMagick
-      run: command -v convert >/dev/null || (sudo apt-get update && sudo apt-get install -y imagemagick)
-
-    - name: Take screenshot
-      env:
-        OUTPUT_FILE: '${{ env.SLUG }}.png'
-      run: node screenshot.js
-
-    - name: Convert to TRMNL format
-      run: |
-        convert ${{ env.SLUG }}-raw.png \
-          -monochrome -colors 2 -depth 1 -strip \
-          png:${{ env.SLUG }}.png
-        identify ${{ env.SLUG }}.png
-
-    - name: Extract LAST UPDATE time
-      id: meta
-      run: |
-        META="${{ env.SLUG }}-meta.json"
-        if [ -f "$META" ]; then
-          LAST_UPDATE=$(python3 -c "import json; print(json.load(open('$META')).get('lastUpdate') or '')")
-        else
-          LAST_UPDATE=""
-        fi
-        echo "Last update: ${LAST_UPDATE:-none}"
-        echo "last_update=${LAST_UPDATE}" >> "$GITHUB_OUTPUT"
-
-    - name: Append to log
-      run: |
-        SIZE=$(stat -c%s "${{ env.SLUG }}.png" 2>/dev/null || echo 0)
-        LU="${{ steps.meta.outputs.last_update }}"
-        python3 -c "
-        import json, os
-        f = 'log.json'
-        log = json.load(open(f)) if os.path.exists(f) else []
-        log.append({
-          'ts': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
-          'slug': '${{ env.SLUG }}',
-          'ok': True,
-          'size': $SIZE,
-          'lastUpdate': '$LU' if '$LU' else None,
-          'runId': '${{ github.run_id }}',
-          'elapsed': $SECONDS
-        })
-        json.dump(log[-500:], open(f, 'w'), indent=2)
-        "
-
-    - name: Commit
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add ${{ env.SLUG }}.png log.json
-        if ! git diff --cached --quiet; then
-          git commit -m "Update ${{ env.SLUG }} $(date +'%Y-%m-%d %H:%M:%S')"
-          git pull --rebase origin main
-          git push
-        else
-          echo "unchanged"
-        fi
-
-    - name: Log failure
-      if: failure()
-      run: |
-        python3 -c "
-        import json, os
-        f = 'log.json'
-        log = json.load(open(f)) if os.path.exists(f) else []
-        log.append({
-          'ts': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
-          'slug': '${{ env.SLUG }}',
-          'ok': False,
-          'size': 0,
-          'lastUpdate': None,
-          'runId': '${{ github.run_id }}',
-          'elapsed': $SECONDS
-        })
-        json.dump(log[-500:], open(f, 'w'), indent=2)
-        "
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add log.json
-        git diff --cached --quiet || (git commit -m "Log failure ${{ env.SLUG }}" && git pull --rebase origin main && git push)
-
-  # ---- BLANKENFELDE (runs after barcelona) ----
-  screenshot-blankenfelde:
-    runs-on: ubuntu-latest
-    needs: [check-schedule, screenshot-barcelona]
-    if: |
-      always() &&
-      ((github.event_name == 'schedule' && needs.check-schedule.outputs.should_run == 'true') ||
-       (github.event_name == 'workflow_dispatch' && (inputs.job == 'all' || inputs.job == 'blankenfelde')))
-    env:
-      SLUG: blankenfelde
-      SCREENSHOT_URL: https://wetterdirect.netlify.app/blankenfelde
-
-    steps:
-    - uses: actions/checkout@v4
-    - name: Pull latest (get barcelona's changes)
-      run: git pull origin main
-    - uses: actions/setup-node@v4
-      with:
-        node-version: '22'
-    - uses: actions/cache@v4
-      with:
-        path: ~/.cache/ms-playwright
-        key: ${{ runner.os }}-playwright-${{ hashFiles('screenshot.js') }}
-        restore-keys: ${{ runner.os }}-playwright-
-    - run: npm init -y && npm install playwright
-    - run: npx playwright install chromium
-    - name: Install ImageMagick
-      run: command -v convert >/dev/null || (sudo apt-get update && sudo apt-get install -y imagemagick)
-
-    - name: Take screenshot
-      env:
-        OUTPUT_FILE: '${{ env.SLUG }}.png'
-      run: node screenshot.js
-
-    - name: Convert to TRMNL format
-      run: |
-        convert ${{ env.SLUG }}-raw.png \
-          -monochrome -colors 2 -depth 1 -strip \
-          png:${{ env.SLUG }}.png
-        identify ${{ env.SLUG }}.png
-
-    - name: Extract LAST UPDATE time
-      id: meta
-      run: |
-        META="${{ env.SLUG }}-meta.json"
-        if [ -f "$META" ]; then
-          LAST_UPDATE=$(python3 -c "import json; print(json.load(open('$META')).get('lastUpdate') or '')")
-        else
-          LAST_UPDATE=""
-        fi
-        echo "Last update: ${LAST_UPDATE:-none}"
-        echo "last_update=${LAST_UPDATE}" >> "$GITHUB_OUTPUT"
-
-    - name: Append to log
-      run: |
-        SIZE=$(stat -c%s "${{ env.SLUG }}.png" 2>/dev/null || echo 0)
-        LU="${{ steps.meta.outputs.last_update }}"
-        python3 -c "
-        import json, os
-        f = 'log.json'
-        log = json.load(open(f)) if os.path.exists(f) else []
-        log.append({
-          'ts': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
-          'slug': '${{ env.SLUG }}',
-          'ok': True,
-          'size': $SIZE,
-          'lastUpdate': '$LU' if '$LU' else None,
-          'runId': '${{ github.run_id }}',
-          'elapsed': $SECONDS
-        })
-        json.dump(log[-500:], open(f, 'w'), indent=2)
-        "
-
-    - name: Commit
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add ${{ env.SLUG }}.png log.json
-        if ! git diff --cached --quiet; then
-          git commit -m "Update ${{ env.SLUG }} $(date +'%Y-%m-%d %H:%M:%S')"
-          git pull --rebase origin main
-          git push
-        else
-          echo "unchanged"
-        fi
-
-    - name: Log failure
-      if: failure()
-      run: |
-        python3 -c "
-        import json, os
-        f = 'log.json'
-        log = json.load(open(f)) if os.path.exists(f) else []
-        log.append({
-          'ts': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
-          'slug': '${{ env.SLUG }}',
-          'ok': False,
-          'size': 0,
-          'lastUpdate': None,
-          'runId': '${{ github.run_id }}',
-          'elapsed': $SECONDS
-        })
-        json.dump(log[-500:], open(f, 'w'), indent=2)
-        "
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add log.json
-        git diff --cached --quiet || (git commit -m "Log failure ${{ env.SLUG }}" && git pull --rebase origin main && git push)
+      - name: Run screenshot pipeline
+        env:
+          # Passed via env:, never interpolated directly into this `run:`
+          # script -- workflow_dispatch inputs and step outputs are
+          # attacker-influenceable strings; splicing them into shell text
+          # is the classic GitHub Actions script-injection shape.
+          ONLY: ${{ inputs.only }}
+          DEPTH_OVERRIDE: ${{ inputs.depth }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          UPLOAD_TOKEN: ${{ secrets.UPLOAD_TOKEN }}
+        run: node run.js
