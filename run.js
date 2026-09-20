@@ -185,7 +185,11 @@ async function uploadNext(base, slug, buffer, token) {
   return res;
 }
 
-async function verifyReadback(base, slug, uploaded) {
+/**
+ * Fetch /img/{slug} once and compare it to what we just uploaded.
+ * Throws on anything wrong; returns {contentLength, bytes} on success.
+ */
+async function readbackOnce(base, slug, uploaded) {
   const url = `${base}/img/${slug}`;
   // Accept-Encoding: identity mimics the TRMNL device, which does not
   // negotiate compression. Without it undici sends
@@ -230,6 +234,52 @@ async function verifyReadback(base, slug, uploaded) {
     throw new Error(`read-back bytes differ from uploaded bytes (uploaded ${uploaded.length}B, read back ${bodyBuf.length}B)`);
   }
   return { contentLength: contentLength ? Number(contentLength) : null, bytes: bodyBuf.length };
+}
+
+// Netlify Blobs is eventually consistent. A read taken ~1s after a write can
+// be served the PREVIOUS version -- observed in runs #14014/#14016/#14017 as
+// "read-back bytes differ (uploaded 5351B, read back 5367B)", a whole prior
+// image, interleaved with passes on the identical commit.
+//
+// consistency: 'strong' is NOT the fix: it is unavailable in Lambda-compat
+// functions (no uncachedEdgeURL) and fails closed, which broke uploads
+// entirely in run #14018.
+//
+// So: retry the read, briefly. This is a propagation delay, not a masked
+// bug -- the bytes we wrote are correct, they just have not landed on the
+// edge we are reading from. A retry that succeeds is still logged, so if
+// propagation ever gets slow enough to matter it shows up rather than being
+// silently absorbed. The device is not affected either way: it fetches on
+// its own ~15-minute cadence, never a second after a write.
+const READBACK_ATTEMPTS = 4;
+const READBACK_DELAY_MS = 1500;
+
+async function verifyReadback(base, slug, uploaded, opts = {}) {
+  const attempts = opts.attempts ?? READBACK_ATTEMPTS;
+  const delayMs = opts.delayMs ?? READBACK_DELAY_MS;
+  let lastErr;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const result = await readbackOnce(base, slug, uploaded);
+      if (attempt > 1) {
+        console.warn(
+          `  note: read-back for ${slug} matched on attempt ${attempt}/${attempts} ` +
+          `(~${((attempt - 1) * delayMs) / 1000}s of blob propagation delay).`);
+      }
+      return result;
+    } catch (err) {
+      lastErr = err;
+      // Only a stale-read looks like this. A wrong status, a bad
+      // Content-Length or a genuinely corrupt body will not fix itself by
+      // waiting, so fail those immediately rather than burning the budget.
+      if (!/read-back bytes differ/.test(err.message) || attempt === attempts) {
+        throw err;
+      }
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  throw lastErr;
 }
 
 function readMeta(metaFile) {
