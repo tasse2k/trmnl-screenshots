@@ -186,7 +186,18 @@ async function uploadNext(base, slug, buffer, token) {
 
 async function verifyReadback(base, slug, uploaded) {
   const url = `${base}/img/${slug}-next`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(30_000), cache: 'no-store' });
+  // Accept-Encoding: identity mimics the TRMNL device, which does not
+  // negotiate compression. Without it undici sends
+  // `accept-encoding: gzip, deflate, br`; if the edge then compresses,
+  // undici transparently DECOMPRESSES and DROPS content-length, because the
+  // header no longer describes the decoded body. The check would then fail on
+  // a response the device never actually receives. Asking for identity makes
+  // this verify the bytes and headers the device will really get.
+  const res = await fetch(url, {
+    signal: AbortSignal.timeout(30_000),
+    cache: 'no-store',
+    headers: { 'Accept-Encoding': 'identity' },
+  });
   if (!res.ok) {
     throw new Error(`GET ${url} -> HTTP ${res.status}`);
   }
@@ -194,7 +205,14 @@ async function verifyReadback(base, slug, uploaded) {
   const bodyBuf = Buffer.from(await res.arrayBuffer());
 
   if (!contentLength) {
-    throw new Error(`GET ${url} did not send a Content-Length header`);
+    // Not a pedantic check: TRMNL firmware fails to render images from
+    // endpoints that omit Content-Length (usetrmnl/trmnl-firmware#156).
+    const enc = res.headers.get('content-encoding') || 'none';
+    const te = res.headers.get('transfer-encoding') || 'none';
+    throw new Error(
+      `GET ${url} did not send a Content-Length header ` +
+      `(content-encoding=${enc}, transfer-encoding=${te}). ` +
+      `TRMNL firmware requires it -- see usetrmnl/trmnl-firmware#156.`);
   }
   if (Number(contentLength) !== bodyBuf.length) {
     throw new Error(`Content-Length (${contentLength}) does not match actual body length (${bodyBuf.length})`);
