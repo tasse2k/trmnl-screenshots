@@ -45,9 +45,38 @@ on:
 permissions:
   contents: read
 
+# A newer screenshot supersedes an older one. The image is a snapshot of
+# "now", so a run still in flight when the next 15-minute tick fires is
+# already producing a stale frame -- cancelling it loses nothing, and the
+# next run writes a fresher image a minute later.
+#
+# This creates NO extra runs. The cadence is 96 dispatches a day either way;
+# this only decides what happens to one that is still going when the next
+# arrives. In normal operation nothing is ever cancelled -- a run takes ~50s
+# against a 15-minute tick -- so a cancellation only ever means "that run was
+# already broken".
+#
+# It is not a timeout dressed up, and it does not hide a hang. With `false`,
+# run #14083 wedged and #14084 queued behind it and wedged too, and both
+# displays sat on a 14-minute-old frame until they were cancelled by hand.
+#
+# THE TRADE, stated honestly: `false` blocks everything for up to GitHub's
+# 6-hour job limit and then fails, which is slow but LOUD (a failed run
+# emails). `true` clears a stuck run at the next tick, but if something ever
+# wedges EVERY run, they all get cancelled and nothing completes -- and a
+# cancelled run does not email, so that failure mode is SILENT. Freshness is
+# still visible on wetterdirect.netlify.app/status, which reads each city's
+# blob `uploadedAt` and goes yellow at 20 minutes and red at 40, but that is
+# a page someone has to look at.
+#
+# Chosen because the loud-but-6-hours behaviour is worse for a wall display
+# than self-healing, and because the deadlock that caused #14083 is fixed and
+# covered by lib/retry.test.js. If the silent case ever bites, the fix is a
+# freshness assertion in run.js that FAILS the run when the last upload is
+# too old -- a content check that emails, not another timer.
 concurrency:
   group: screenshot
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   screenshot:
