@@ -4,7 +4,24 @@ const fs = require('fs');
 (async () => {
   const browser = await chromium.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      // Chromium antialiases text with LCD subpixel rendering by default:
+      // it lights the R, G and B stripes of a colour monitor's pixel
+      // separately, so every glyph edge comes out colour-fringed. Measured
+      // on the dashboard, that was 23,211 fringed pixels with R-B spreads
+      // up to 160 -- every antialiased pixel on the frame.
+      //
+      // The panel is monochrome, so none of that is signal. Worse,
+      // `-colorspace Gray` weights the channels 0.299/0.587/0.114, so the
+      // orange fringe on one side of a stem and the blue fringe on the
+      // other resolve to DIFFERENT greys: the smear is asymmetric.
+      //
+      // This flag renders neutral greyscale antialiasing instead. Grey
+      // pixels drop from 23,210 to 18,958 and the fringes go to zero.
+      '--disable-lcd-text',
+    ],
   });
 
   const context = await browser.newContext({

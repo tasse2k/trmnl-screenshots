@@ -166,6 +166,47 @@ function validateImage(outFile, expectedDepth) {
   return { width: w, height: h, depth: z };
 }
 
+// A one-shot 30s fetch against a serverless function is fragile: a cold
+// start, a dropped connection or a 5xx costs the whole run, and the workflow
+// emails on it. Run #35563917437 died exactly this way -- blankenfelde
+// screenshotted fine, then "The operation was aborted due to timeout" 30s
+// later with no second attempt.
+//
+// Retry only what a retry can fix. A timeout, a socket error or a 5xx is the
+// platform having a bad moment. A 401 or a 413 is us being wrong, and
+// retrying it just delays the real error and hammers the endpoint.
+function isTransient(err) {
+  if (err && (err.name === 'TimeoutError' || err.name === 'AbortError')) return true;
+  if (err && typeof err.status === 'number') return err.status >= 500 || err.status === 429;
+  // undici wraps connection-level failures as TypeError('fetch failed').
+  return err instanceof TypeError && /fetch failed/i.test(err.message);
+}
+
+const NETWORK_ATTEMPTS = 3;
+const NETWORK_BACKOFF_MS = 2000;
+
+async function withRetry(label, fn, opts = {}) {
+  const attempts = opts.attempts ?? NETWORK_ATTEMPTS;
+  const backoffMs = opts.backoffMs ?? NETWORK_BACKOFF_MS;
+  let lastErr;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const out = await fn();
+      if (attempt > 1) {
+        console.warn(`  note: ${label} succeeded on attempt ${attempt}/${attempts}.`);
+      }
+      return out;
+    } catch (err) {
+      lastErr = err;
+      if (!isTransient(err) || attempt === attempts) throw err;
+      const wait = backoffMs * 2 ** (attempt - 1);
+      console.warn(`  note: ${label} failed (${err.message}); retrying in ${wait / 1000}s.`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+  throw lastErr;
+}
+
 async function uploadNext(base, slug, buffer, token) {
   const url = `${base}/upload/${slug}`;
   const res = await fetch(url, {
@@ -180,7 +221,9 @@ async function uploadNext(base, slug, buffer, token) {
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`POST ${url} -> HTTP ${res.status} ${body.slice(0, 300)}`);
+    const err = new Error(`POST ${url} -> HTTP ${res.status} ${body.slice(0, 300)}`);
+    err.status = res.status;
+    throw err;
   }
   return res;
 }
@@ -204,7 +247,9 @@ async function readbackOnce(base, slug, uploaded) {
     headers: { 'Accept-Encoding': 'identity' },
   });
   if (!res.ok) {
-    throw new Error(`GET ${url} -> HTTP ${res.status}`);
+    const err = new Error(`GET ${url} -> HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
   }
   const contentLength = res.headers.get('content-length');
   const bodyBuf = Buffer.from(await res.arrayBuffer());
@@ -270,10 +315,11 @@ async function verifyReadback(base, slug, uploaded, opts = {}) {
       return result;
     } catch (err) {
       lastErr = err;
-      // Only a stale-read looks like this. A wrong status, a bad
-      // Content-Length or a genuinely corrupt body will not fix itself by
-      // waiting, so fail those immediately rather than burning the budget.
-      if (!/read-back bytes differ/.test(err.message) || attempt === attempts) {
+      // A stale read or a transient network failure is worth waiting out. A
+      // bad Content-Length or a genuinely corrupt body will not fix itself,
+      // so fail those immediately rather than burning the budget.
+      const worthRetrying = /read-back bytes differ/.test(err.message) || isTransient(err);
+      if (!worthRetrying || attempt === attempts) {
         throw err;
       }
       await new Promise((r) => setTimeout(r, delayMs));
@@ -326,7 +372,7 @@ async function runCity(slug, cityConfig, opts) {
       if (!token) {
         throw new Error('UPLOAD_TOKEN is not set -- refusing to attempt an unauthenticated upload');
       }
-      await uploadNext(base, slug, buffer, token);
+      await withRetry(`upload of ${slug}`, () => uploadNext(base, slug, buffer, token));
       await verifyReadback(base, slug, buffer);
     }
 
@@ -419,6 +465,7 @@ async function main() {
 module.exports = {
   loadRegistry, selectCities, resolveDepth, convertImage, validateImage,
   uploadNext, verifyReadback, runCity, main, screenshotPaths,
+  isTransient, withRetry,
 };
 
 if (require.main === module) {
