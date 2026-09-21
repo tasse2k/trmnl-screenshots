@@ -43,12 +43,26 @@ const fs = require('fs');
       timeout: 90000
     });
 
-    // Wait for fonts to load completely
+    // Wait for fonts to load completely.
+    //
+    // NOTE the filter on `status`. FontFace.loaded is only ever settled for a
+    // face the page actually asks for: a declared-but-unused @font-face sits
+    // at status "unloaded" with a promise that, by spec, never resolves AND
+    // never rejects -- so `try/catch` around it does nothing, because there is
+    // no rejection to catch. Awaiting one deadlocks, and page.evaluate() takes
+    // no timeout in Playwright, so it deadlocks forever. That is precisely how
+    // run #14083 wedged for hours and froze both displays behind the
+    // `concurrency: screenshot` group.
+    //
+    // Waiting on the faces that ARE loading is the part that makes the
+    // screenshot pixel-perfect, so that is kept exactly as it was.
     await page.evaluate(async () => {
       await document.fonts.ready;
-      await Promise.all(Array.from(document.fonts).map(async (font) => {
-        try { await font.loaded; } catch (e) {}
-      }));
+      await Promise.all(Array.from(document.fonts)
+        .filter((font) => font.status === 'loading')
+        .map(async (font) => {
+          try { await font.loaded; } catch (e) {}
+        }));
       for (const fontFamily of ['Inter', 'Roboto', 'Arial', 'sans-serif']) {
         try { await document.fonts.load(`16px "${fontFamily}"`); } catch (e) {}
       }

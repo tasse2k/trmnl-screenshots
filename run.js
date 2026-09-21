@@ -182,8 +182,28 @@ function isTransient(err) {
   return err instanceof TypeError && /fetch failed/i.test(err.message);
 }
 
+// Error budget. The workflow runs every 15 minutes behind
+// `concurrency: screenshot`, so a slow run eats into the next one's slot and
+// a run that outlives its interval starts queueing them. The budget is sized
+// so the worst case is a small fraction of that interval:
+//
+//   per request      15s  -- a Netlify function cold start is 1-3s, so this
+//                           is 5x headroom. The one real failure we have
+//                           (run #35563917437) was a single timeout, so what
+//                           matters is having a second attempt, not a long
+//                           first one.
+//   upload           3 attempts, 1s then 2s backoff   -> 3x15 + 3  =  48s
+//   read-back        4 attempts, 1.5s apart           -> 4x15 + 4.5=  65s
+//   per city worst                                                  ~113s
+//   both cities worst                                               ~226s
+//
+// 226s is 25% of the interval, so even a doubly-bad run finishes with ~11
+// minutes to spare. The read-back attempt count stays at 4 because it is
+// tuned for blob propagation, which is a sub-second effect, not for network
+// failure.
+const REQUEST_TIMEOUT_MS = 15_000;
 const NETWORK_ATTEMPTS = 3;
-const NETWORK_BACKOFF_MS = 2000;
+const NETWORK_BACKOFF_MS = 1000;
 
 async function withRetry(label, fn, opts = {}) {
   const attempts = opts.attempts ?? NETWORK_ATTEMPTS;
@@ -217,7 +237,7 @@ async function uploadNext(base, slug, buffer, token) {
       'Content-Length': String(buffer.length),
     },
     body: buffer,
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
@@ -242,7 +262,7 @@ async function readbackOnce(base, slug, uploaded) {
   // a response the device never actually receives. Asking for identity makes
   // this verify the bytes and headers the device will really get.
   const res = await fetch(url, {
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     cache: 'no-store',
     headers: { 'Accept-Encoding': 'identity' },
   });
