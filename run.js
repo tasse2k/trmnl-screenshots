@@ -2,8 +2,9 @@
 
 // Screenshot runner (T4).
 //
-// Loops over the cities in the T2 registry (`GET /locations`), applies
-// per-city quiet hours, and for each due city:
+// Loops over the cities in the T2 registry (`GET /locations`), applies the
+// per-city publish schedule (local-time bands + quiet hours, lib/schedule.js),
+// and for each due city:
 //   1. renders + screenshots via screenshot.js (UNCHANGED, not touched here)
 //   2. converts to 1-bit (default) or 2-bit (opt-in) PNG with ImageMagick
 //   3. validates geometry (800x480) and bit depth with `identify`
@@ -182,10 +183,10 @@ function isTransient(err) {
   return err instanceof TypeError && /fetch failed/i.test(err.message);
 }
 
-// Error budget. The workflow runs every 15 minutes behind
-// `concurrency: screenshot`, so a slow run eats into the next one's slot and
-// a run that outlives its interval starts queueing them. The budget is sized
-// so the worst case is a small fraction of that interval:
+// Error budget. The workflow is dispatched every 5 minutes behind
+// `concurrency: screenshot` with cancel-in-progress, so a run that outlives
+// its tick is killed by its successor and publishes nothing. The budget is
+// sized so even the worst case finishes inside one tick:
 //
 //   per request      15s  -- a Netlify function cold start is 1-3s, so this
 //                           is 5x headroom. The one real failure we have
@@ -197,8 +198,11 @@ function isTransient(err) {
 //   per city worst                                                  ~113s
 //   both cities worst                                               ~226s
 //
-// 226s is 25% of the interval, so even a doubly-bad run finishes with ~11
-// minutes to spare. The read-back attempt count stays at 4 because it is
+// Add ~35-50s of runner startup (checkout, npm ci, Playwright cache,
+// ImageMagick) and the absolute worst case is ~4.6 min, against a tick that
+// arrives 5 min later plus its own 20-50s of Netlify dispatch latency. It
+// fits, but not by much -- shorten this budget, not the tick, if the startup
+// cost ever grows. The read-back attempt count stays at 4 because it is
 // tuned for blob propagation, which is a sub-second effect, not for network
 // failure.
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -315,7 +319,7 @@ async function readbackOnce(base, slug, uploaded) {
 // edge we are reading from. A retry that succeeds is still logged, so if
 // propagation ever gets slow enough to matter it shows up rather than being
 // silently absorbed. The device is not affected either way: it fetches on
-// its own ~15-minute cadence, never a second after a write.
+// its own fuzzy ~15-minute cadence, never a second after a write.
 const READBACK_ATTEMPTS = 4;
 const READBACK_DELAY_MS = 1500;
 
@@ -366,7 +370,11 @@ async function runCity(slug, cityConfig, opts) {
   }
 
   if (!schedule.shouldRun(cityConfig, now)) {
-    return { slug, ok: true, skipped: true, reason: 'quiet-hours', elapsedMs: 0 };
+    // Name the cadence in the summary: "not due" on its own cannot tell a
+    // healthy 10-minute band from a city that has silently stopped
+    // publishing, which is exactly how the old hourly-quiet bug hid.
+    const every = schedule.intervalMinutes(cityConfig, now);
+    return { slug, ok: true, skipped: true, reason: `not due (every ${every} min)`, elapsedMs: 0 };
   }
 
   const depth = resolveDepth(cityConfig, depthOverride);

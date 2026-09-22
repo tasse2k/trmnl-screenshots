@@ -14,10 +14,12 @@ here** — no city list, no timezones, no URLs beyond the one base address.
 ## What a run does
 
 ```
-workflow_dispatch  (fired by a Netlify scheduled function every 15 min)
+workflow_dispatch  (fired by a Netlify scheduled function every 5 min)
   └─ run.js
        ├─ GET /locations                     cities, timezones, quiet hours
-       ├─ skip cities inside their quiet window   (hourly instead of 15 min)
+       ├─ skip cities not due on this tick        (local-time band schedule:
+       │                                          5/10/15 min by hour, hourly
+       │                                          inside the quiet window)
        └─ per remaining city:
             ├─ screenshot.js -> Playwright -> {slug}-raw.png
             ├─ ImageMagick   -> 800x480 1-bit PNG
@@ -40,10 +42,10 @@ near-instantly, so the schedule lives outside GitHub.
 | | |
 |---|---|
 | `.github/workflows/screenshot.yml` | One batched job, `workflow_dispatch` only, `contents: read` |
-| `run.js` | Orchestrator: registry, quiet hours, convert, validate, upload, verify |
+| `run.js` | Orchestrator: registry, publish schedule, convert, validate, upload, verify |
 | `screenshot.js` | Playwright capture. **Do not modify** — see below |
-| `lib/schedule.js` | Quiet-hours logic, mirrored from wetterstation |
-| `lib/*.test.js` | `npm test` — quiet hours, filename contract, read-back |
+| `lib/schedule.js` | Publish schedule (bands + quiet hours). Byte-identical copy of wetterstation `lib/schedule.js` — `diff` them after touching either |
+| `lib/*.test.js` | `npm test` — publish schedule, filename contract, read-back |
 | `fixtures/` | Sample `/locations` payload for offline runs |
 | `*.png`, `log.json` | Historical artefacts of the pre-2026-09 pipeline. Frozen — the job is `contents: read` and can no longer write them |
 

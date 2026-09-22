@@ -20,9 +20,11 @@ name: Automated Screenshots
 # (Netlify Scheduled Function, T5) hits the workflow_dispatch API on a
 # tight interval instead; workflow_dispatch is picked up near-instantly.
 #
-# Quiet hours are decided PER CITY, IN ITS OWN TIMEZONE, inside run.js
-# (lib/schedule.js) -- not here. A single workflow-level gate cannot
-# express that.
+# The publish cadence is decided PER CITY, IN ITS OWN TIMEZONE, inside run.js
+# (lib/schedule.js) -- not here. The dispatch is every 5 minutes; each city
+# publishes every 5, 10, 15 or 60 minutes depending on its local hour and its
+# quiet window. A single workflow-level gate cannot express that, and a tick
+# no city is due on exits in about a second.
 
 on:
   workflow_dispatch:
@@ -46,15 +48,17 @@ permissions:
   contents: read
 
 # A newer screenshot supersedes an older one. The image is a snapshot of
-# "now", so a run still in flight when the next 15-minute tick fires is
-# already producing a stale frame -- cancelling it loses nothing, and the
-# next run writes a fresher image a minute later.
+# "now", so a run still in flight when the next tick fires is already
+# producing a stale frame -- cancelling it loses nothing, and the next run
+# writes a fresher image a minute later.
 #
-# This creates NO extra runs. The cadence is 96 dispatches a day either way;
+# This creates NO extra runs. The cadence is 288 dispatches a day either way;
 # this only decides what happens to one that is still going when the next
 # arrives. In normal operation nothing is ever cancelled -- a run takes ~50s
-# against a 15-minute tick -- so a cancellation only ever means "that run was
-# already broken".
+# against a 5-minute tick, and run.js's error budget keeps even the worst
+# case at ~4.6 min -- so a cancellation only ever means "that run was already
+# broken". If runner startup ever grows, shorten that budget rather than
+# slowing the tick.
 #
 # It is not a timeout dressed up, and it does not hide a hang. With `false`,
 # run #14083 wedged and #14084 queued behind it and wedged too, and both
@@ -66,8 +70,8 @@ permissions:
 # wedges EVERY run, they all get cancelled and nothing completes -- and a
 # cancelled run does not email, so that failure mode is SILENT. Freshness is
 # still visible on wetterdirect.netlify.app/status, which reads each city's
-# blob `uploadedAt` and goes yellow at 20 minutes and red at 40, but that is
-# a page someone has to look at.
+# blob `uploadedAt` and goes yellow and red against the cadence that city is
+# actually on, but that is a page someone has to look at.
 #
 # Chosen because the loud-but-6-hours behaviour is worse for a wall display
 # than self-healing, and because the deadlock that caused #14083 is fixed and
