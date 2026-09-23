@@ -373,8 +373,12 @@ async function runCity(slug, cityConfig, opts) {
     // Name the cadence in the summary: "not due" on its own cannot tell a
     // healthy 10-minute band from a city that has silently stopped
     // publishing, which is exactly how the old hourly-quiet bug hid.
+    // Name the tick too: the schedule is evaluated for the tick `now` falls
+    // in, not for `now` itself, and a skip is only auditable if the log says
+    // which tick it decided about.
     const every = schedule.intervalMinutes(cityConfig, now);
-    return { slug, ok: true, skipped: true, reason: `not due (every ${every} min)`, elapsedMs: 0 };
+    const tick = schedule.tickOf(now).toISOString().slice(11, 16);
+    return { slug, ok: true, skipped: true, reason: `not due (every ${every} min, tick ${tick}Z)`, elapsedMs: 0 };
   }
 
   const depth = resolveDepth(cityConfig, depthOverride);
