@@ -23,8 +23,8 @@ name: Automated Screenshots
 # The publish cadence is decided PER CITY, IN ITS OWN TIMEZONE, inside run.js
 # (lib/schedule.js) -- not here. The dispatch is every 5 minutes; each city
 # publishes every 5, 10, 15 or 60 minutes depending on its local hour and its
-# quiet window. A single workflow-level gate cannot express that, and a tick
-# no city is due on exits in about a second.
+# quiet window. plan.js makes that decision first, with the same code, and a
+# tick no city is due on skips every install and finishes in a few seconds.
 
 on:
   workflow_dispatch:
@@ -85,6 +85,11 @@ concurrency:
 jobs:
   screenshot:
     runs-on: ubuntu-latest
+    # A run takes under a minute and the next dispatch cancels one that is
+    # still going at five. This only matters if dispatches stop arriving:
+    # without it a hung run would hold the concurrency group for GitHub's
+    # default six hours.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -92,15 +97,27 @@ jobs:
         with:
           node-version: '22'
 
+      # Before any install: is a city due on this tick? See plan.js. Needs only
+      # Node and the checkout. Every later step is skipped when the answer is no.
+      - name: Plan
+        id: plan
+        env:
+          ONLY: ${{ inputs.only }}
+          UPLOAD_TOKEN: ${{ secrets.UPLOAD_TOKEN }}
+        run: node plan.js
+
       - name: Install dependencies
+        if: steps.plan.outputs.due == 'true'
         run: npm ci
 
       - name: Resolve pinned Playwright version
+        if: steps.plan.outputs.due == 'true'
         id: pw
         run: |
           echo "version=$(node -p "require('./package.json').dependencies.playwright")" >> "$GITHUB_OUTPUT"
 
       - uses: actions/cache@v4
+        if: steps.plan.outputs.due == 'true'
         with:
           path: ~/.cache/ms-playwright
           # Keyed on the pinned Playwright version (package.json), not on
@@ -110,14 +127,36 @@ jobs:
           key: ${{ runner.os }}-playwright-${{ steps.pw.outputs.version }}
           restore-keys: ${{ runner.os }}-playwright-
 
+      # Both installs below download from the Ubuntu mirror, and a slow mirror
+      # is what hung 90 runs in one week (37 in a row on 2026-11-11). Give up
+      # on a stalled download quickly and retry it, instead of waiting on it
+      # until the next dispatch cancels the run.
+      - name: Make apt give up on a stalled mirror
+        if: steps.plan.outputs.due == 'true'
+        run: |
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "15";\nAcquire::https::Timeout "15";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99-meteoframe-timeouts >/dev/null
+
       - name: Install Playwright browser (chromium)
+        if: steps.plan.outputs.due == 'true'
         run: npx playwright install --with-deps chromium
 
+      # The step above has just refreshed the package lists, so install
+      # straight away and only refresh again if that fails. No recommended
+      # packages: they are Ghostscript and PostScript fonts (about 20 MB,
+      # including the 10.9 MB download that stalled on 2026-11-10), and a
+      # PNG-to-PNG conversion uses none of them.
       - name: Install ImageMagick
-        run: command -v convert >/dev/null || (sudo apt-get update && sudo apt-get install -y imagemagick)
+        if: steps.plan.outputs.due == 'true'
+        run: |
+          command -v convert >/dev/null && exit 0
+          sudo apt-get install -y --no-install-recommends imagemagick \
+            || (sudo apt-get update && sudo apt-get install -y --no-install-recommends imagemagick)
 
       - name: Run screenshot pipeline
+        if: steps.plan.outputs.due == 'true'
         env:
+          PLAN_NOW: ${{ steps.plan.outputs.now }}
           # Passed via env:, never interpolated directly into this `run:`
           # script -- workflow_dispatch inputs and step outputs are
           # attacker-influenceable strings; splicing them into shell text

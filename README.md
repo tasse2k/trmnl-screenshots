@@ -66,6 +66,17 @@ upload endpoint fails closed with 503.
 
 ## Things that look wrong and are not
 
+- **`plan.js` runs before anything is installed.** About half of all ticks
+  have no city due. It makes that decision first, with the same
+  `lib/schedule.js` and registry as `run.js`, so those runs skip the installs
+  (the step that hangs when the Ubuntu mirror is slow) and finish in seconds.
+  It fails open: if it cannot decide, the full pipeline runs.
+- **`watchdog.yml` is the alarm.** Hourly, it asks the site's `/health`
+  whether each frame was published on schedule and has current weather, and
+  fails if not -- a failed run is what emails. It is the only `schedule:`
+  workflow here, deliberately separate from the publisher. GitHub disables
+  scheduled workflows in a repository with no commits for 60 days and emails
+  first; re-enable it from the Actions tab when that happens.
 - **`screenshot.js` refuses any page the dashboard did not answer 200 for.**
   Playwright's `goto()` resolves on a 500, and an error page is 800x480 like
   any other, so it used to pass every check and be published as the frame.
