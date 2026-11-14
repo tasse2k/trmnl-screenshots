@@ -1,0 +1,53 @@
+name: Watchdog
+
+# The publisher (screenshot.yml) only emails when one of its own runs fails.
+# It says nothing when it stops being dispatched, when every run is cancelled
+# by the next, or when the frames are running on old weather -- the failures
+# that actually leave a frame wrong for hours.
+#
+# This asks the site instead: /health answers 200 when every frame was
+# published on schedule from current weather data, and 503 with the reason
+# when one was not. A non-200 fails the run, and a failed run is what emails.
+#
+# `schedule:` here, unlike the publisher. GitHub's cron is best-effort and can
+# run late or skip, which is fatal for publishing every 5 minutes and harmless
+# for an hourly check.
+#
+# GitHub disables scheduled workflows in a repository that has had no commits
+# for 60 days, and emails before it does. Re-enable it from the Actions tab.
+
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: watchdog
+  cancel-in-progress: true
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ask the site whether the frames are healthy
+        run: |
+          set -u
+          url="https://wetterdirect.netlify.app/health"
+          # Three tries, so one cold start or dropped connection is not an alarm.
+          for attempt in 1 2 3; do
+            code=$(curl -sS -m 20 -o body.json -w '%{http_code}' "$url" || echo 000)
+            [ "$code" = "200" ] && break
+            [ "$code" = "503" ] && break
+            echo "attempt $attempt: HTTP $code"
+            sleep 10
+          done
+          echo "HTTP $code"
+          cat body.json 2>/dev/null || true
+          echo
+          if [ "$code" != "200" ]; then
+            echo "::error::METEOframe is not healthy (HTTP $code). See the JSON above and https://wetterdirect.netlify.app/status"
+            exit 1
+          fi

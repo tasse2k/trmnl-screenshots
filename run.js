@@ -49,14 +49,21 @@ async function loadRegistry() {
     // but with no quiet hours, and every city would publish through the
     // night on the 15-minute cadence.
     const token = process.env.UPLOAD_TOKEN;
-    const res = await fetch(url, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      signal: AbortSignal.timeout(10_000),
+    // Retried like the upload: one cold start or 5xx here used to end the
+    // run for every city, and email about it.
+    raw = await withRetry('GET /locations', async () => {
+      const res = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        const err = new Error(`GET ${url} -> HTTP ${res.status} ${body.slice(0, 200)}`.trim());
+        err.status = res.status;
+        throw err;
+      }
+      return res.json();
     });
-    if (!res.ok) {
-      throw new Error(`GET ${url} -> HTTP ${res.status}`);
-    }
-    raw = await res.json();
   }
 
   if (Array.isArray(raw) || Array.isArray(raw && raw.locations)) {
@@ -141,13 +148,22 @@ function screenshotPaths(slug) {
   };
 }
 
+const SCREENSHOT_TIMEOUT_MS = 150_000;
+
 function takeScreenshot(slug, dashboardUrl, outputFile) {
   const result = spawnSync('node', ['screenshot.js'], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
     stdio: 'inherit',
     env: { ...process.env, SCREENSHOT_URL: dashboardUrl, OUTPUT_FILE: outputFile },
+    // screenshot.js normally finishes in about 5s. Its font wait cannot be
+    // timed out from the inside, so bound it from here: without this the only
+    // thing that ended a hung capture was the next dispatch cancelling the run.
+    timeout: SCREENSHOT_TIMEOUT_MS,
   });
+  if (result.signal) {
+    throw new Error(`screenshot.js was killed (${result.signal}) after ${SCREENSHOT_TIMEOUT_MS / 1000}s`);
+  }
   if (result.error) {
     throw new Error(`screenshot.js failed to start: ${result.error.message}`);
   }
@@ -486,7 +502,10 @@ async function main() {
     return;
   }
 
-  const now = new Date();
+  // The instant plan.js decided for, when the workflow ran it first. Using it
+  // here keeps the plan and the pipeline on the same tick.
+  const planned = process.env.PLAN_NOW ? new Date(process.env.PLAN_NOW) : null;
+  const now = planned && !Number.isNaN(planned.getTime()) ? planned : new Date();
   const results = [];
   for (const [slug, cityConfig] of cities) {
     console.log(`\n--- ${slug} ---`);
