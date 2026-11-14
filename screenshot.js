@@ -38,10 +38,25 @@ const fs = require('fs');
     const rawFile = outputFile.replace(/\.png$/, '-raw.png');
     console.log(`Taking screenshot of: ${url}`);
 
-    await page.goto(url, {
+    const response = await page.goto(url, {
       waitUntil: 'networkidle',
       timeout: 90000
     });
+
+    // Only a page the dashboard answered 200 for is ever a frame. goto()
+    // resolves normally on a 4xx/5xx, and an error page is 800x480 like
+    // everything else, so without this it sailed through every later check
+    // (geometry, depth, byte-identical read-back) and was published: the
+    // "Weather Temporarily Unavailable" page reached both panels that way,
+    // from runs that reported success. Failing here publishes nothing, and
+    // the last good image stays on the glass.
+    if (!response || response.status() !== 200) {
+      throw new Error(
+        `dashboard answered HTTP ${response ? response.status() : 'no response'} -- refusing to screenshot it`
+      );
+    }
+    // "fresh", or "stale" when the frame is drawn from last known weather.
+    console.log(`Weather state: ${response.headers()['x-weather-state'] || 'not reported'}`);
 
     // Wait for fonts to load completely.
     //
