@@ -44,7 +44,15 @@ async function loadRegistry() {
     const base = envOrDefault('BASE_URL', 'https://wetterdirect.netlify.app');
     const url = `${base}/locations`;
     source = url;
-    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    // /locations only includes each city's `quiet` window for a caller that
+    // presents the upload token; without it the registry comes back valid
+    // but with no quiet hours, and every city would publish through the
+    // night on the 15-minute cadence.
+    const token = process.env.UPLOAD_TOKEN;
+    const res = await fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      signal: AbortSignal.timeout(10_000),
+    });
     if (!res.ok) {
       throw new Error(`GET ${url} -> HTTP ${res.status}`);
     }

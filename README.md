@@ -66,6 +66,10 @@ upload endpoint fails closed with 503.
 
 ## Things that look wrong and are not
 
+- **`screenshot.js` refuses any page the dashboard did not answer 200 for.**
+  Playwright's `goto()` resolves on a 500, and an error page is 800x480 like
+  any other, so it used to pass every check and be published as the frame.
+  Failing instead leaves the last good image on the panel.
 - **The font-readiness wait in `screenshot.js`** — `document.fonts.ready`,
   per-font `loaded`, explicit `fonts.load()`, a 15 s cap, then a further 3 s.
   It looks redundant. It is what makes the screenshot pixel-perfect on a
