@@ -71,6 +71,13 @@ upload endpoint fails closed with 503.
   `lib/schedule.js` and registry as `run.js`, so those runs skip the installs
   (the step that hangs when the Ubuntu mirror is slow) and finish in seconds.
   It fails open: if it cannot decide, the full pipeline runs.
+- **The publisher does not email.** A city that fails, a run that cannot
+  read the registry, and an Ubuntu mirror that will not serve packages are
+  all reported as warnings on the run, which still succeeds. Almost every
+  such failure is gone by the next tick, so an email about it was noise.
+  Every install attempt is bounded, so a run also finishes before the next
+  dispatch would cancel it. Whether a frame has actually stopped updating is
+  decided in one place: `/health`, polled by the watchdog.
 - **`watchdog.yml` is the alarm.** Hourly, it asks the site's `/health`
   whether each frame was published on schedule and has current weather, and
   fails if not -- a failed run is what emails. It is the only `schedule:`

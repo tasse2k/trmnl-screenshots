@@ -137,9 +137,29 @@ jobs:
           printf 'Acquire::Retries "3";\nAcquire::http::Timeout "15";\nAcquire::https::Timeout "15";\n' \
             | sudo tee /etc/apt/apt.conf.d/99-meteoframe-timeouts >/dev/null
 
+      # The Ubuntu mirror is the one thing here that fails on its own, and it
+      # does so for minutes at a time. Each attempt is bounded, so the whole
+      # step is over in under four minutes -- before the next dispatch would
+      # cancel the run. If every attempt fails, this tick is skipped: the step
+      # still succeeds, the last image stays on the frame, and nothing emails.
+      # A mirror outage long enough to leave a frame stale is what the
+      # watchdog (/health) is for.
       - name: Install Playwright browser (chromium)
+        id: chromium
         if: steps.plan.outputs.due == 'true'
-        run: npx playwright install --with-deps chromium
+        run: |
+          for attempt in 1 2 3; do
+            if timeout 70 npx playwright install --with-deps chromium; then
+              echo "ok=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "attempt $attempt failed"
+            # A killed apt can leave dpkg half-way; finish it before retrying.
+            sudo dpkg --configure -a || true
+            sleep 5
+          done
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::Could not install Chromium's packages from the Ubuntu mirror in 3 attempts. Skipping this tick; the last image stays up."
 
       # The step above has just refreshed the package lists, so install
       # straight away and only refresh again if that fails. No recommended
@@ -147,14 +167,24 @@ jobs:
       # including the 10.9 MB download that stalled on 2026-11-10), and a
       # PNG-to-PNG conversion uses none of them.
       - name: Install ImageMagick
-        if: steps.plan.outputs.due == 'true'
+        id: imagemagick
+        if: steps.plan.outputs.due == 'true' && steps.chromium.outputs.ok == 'true'
         run: |
-          command -v convert >/dev/null && exit 0
-          sudo apt-get install -y --no-install-recommends imagemagick \
-            || (sudo apt-get update && sudo apt-get install -y --no-install-recommends imagemagick)
+          if command -v convert >/dev/null; then echo "ok=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          for attempt in 1 2; do
+            if timeout 60 sudo apt-get install -y --no-install-recommends imagemagick \
+              || (timeout 60 sudo apt-get update && timeout 60 sudo apt-get install -y --no-install-recommends imagemagick); then
+              echo "ok=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sudo dpkg --configure -a || true
+            sleep 5
+          done
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::Could not install ImageMagick from the Ubuntu mirror. Skipping this tick; the last image stays up."
 
       - name: Run screenshot pipeline
-        if: steps.plan.outputs.due == 'true'
+        if: steps.plan.outputs.due == 'true' && steps.imagemagick.outputs.ok == 'true'
         env:
           PLAN_NOW: ${{ steps.plan.outputs.now }}
           # Passed via env:, never interpolated directly into this `run:`

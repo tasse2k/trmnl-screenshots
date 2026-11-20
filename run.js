@@ -13,7 +13,12 @@
 //      (Content-Length is a warning: Netlify always responds chunked)
 //
 // Per-city failures are caught and logged; they do not stop other cities.
-// The process exits non-zero if any (non-skipped) city failed.
+// A city that fails is reported as a GitHub warning, and the process still
+// exits 0. One failed tick is almost always transient (a Netlify 503, a
+// dropped upload) and the next tick repairs it, so failing the run only sent
+// an email about something already fixed. What does need a person -- a frame
+// that has actually stopped updating -- is reported once, by the watchdog
+// workflow polling the site's /health. See README.
 //
 // See docs/tickets/T4-runner-rewrite.md (wetterstation repo) for the spec.
 
@@ -515,9 +520,8 @@ async function main() {
 
   printSummary(results);
 
-  const anyFailed = results.some(r => !r.skipped && !r.ok);
-  if (anyFailed) {
-    process.exitCode = 1;
+  for (const r of results.filter((x) => !x.skipped && !x.ok)) {
+    console.log(`::warning::${r.slug} was not published on this tick: ${String(r.error).split('\n')[0]}`);
   }
 }
 
@@ -530,6 +534,8 @@ module.exports = {
 if (require.main === module) {
   main().catch((err) => {
     console.error('Fatal error:', err);
-    process.exitCode = 1;
+    // Same rule as a failed city: a warning, not an email. If it persists,
+    // nothing is published and the watchdog says so.
+    console.log(`::warning::Run aborted before any city was published: ${String(err && err.message).split('\n')[0]}`);
   });
 }
