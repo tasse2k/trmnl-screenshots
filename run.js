@@ -197,8 +197,8 @@ function validateImage(outFile, expectedDepth) {
 }
 
 // A one-shot 30s fetch against a serverless function is fragile: a cold
-// start, a dropped connection or a 5xx costs the whole run, and the workflow
-// emails on it. Run #35563917437 died exactly this way -- blankenfelde
+// start, a dropped connection or a 5xx costs the whole city. Run #35563917437
+// died exactly this way -- blankenfelde
 // screenshotted fine, then "The operation was aborted due to timeout" 30s
 // later with no second attempt.
 //

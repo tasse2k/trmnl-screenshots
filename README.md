@@ -4,8 +4,10 @@ Screenshot runner for the **METEOframe** TRMNL e-ink weather frames.
 
 This repo is deliberately small: a workflow, a browser script, and the
 scheduling logic. It exists separately from the backend because public repos
-get unlimited GitHub Actions minutes, and at ~83 runs/day a private one would
-cost roughly $24/month in overage.
+get unlimited GitHub Actions minutes. It is dispatched 288 times a day (about
+half of those find no city due and finish in seconds) plus 24 watchdog runs,
+and each run bills at least a minute, which a private repo's free tier does
+not cover.
 
 Rendering, storage, serving and all configuration live in the private
 `tasse2k/wetterstation` repo. **Nothing about the dashboards is configured
@@ -22,14 +24,15 @@ workflow_dispatch  (fired by a Netlify scheduled function every 5 min)
        │                                          inside the quiet window)
        └─ per remaining city:
             ├─ screenshot.js -> Playwright -> {slug}-raw.png
-            ├─ ImageMagick   -> 800x480 1-bit PNG
+            ├─ ImageMagick   -> 800x480 PNG, depth 2 (1-bit is the rollback)
             ├─ identify      -> assert geometry + bit depth
             ├─ POST /upload/{slug}           authenticated, Netlify Blobs
             └─ GET  /img/{slug}              assert byte-identical
 ```
 
-A per-city failure does not abort the others; the job exits non-zero if any
-city failed.
+A per-city failure does not abort the others, and it does not fail the job
+either: it is reported as a warning on the run (see "The publisher does not
+email" below). The job only goes red if something outside `run.js` breaks.
 
 There is **no `schedule:` trigger**, and there must not be one. GitHub's
 scheduled-workflow queue is best-effort: measured over 28 days it delivered
@@ -56,7 +59,7 @@ npm ci
 npx playwright install --with-deps chromium
 UPLOAD_TOKEN=... node run.js          # all due cities
 ONLY=barcelona node run.js            # one city
-DEPTH_OVERRIDE=2 node run.js          # opt-in grayscale, writes -next key
+DEPTH_OVERRIDE=1 node run.js          # force a depth for this run -- publishes LIVE
 npm test
 ```
 
@@ -74,10 +77,15 @@ upload endpoint fails closed with 503.
 - **The publisher does not email.** A city that fails, a run that cannot
   read the registry, and an Ubuntu mirror that will not serve packages are
   all reported as warnings on the run, which still succeeds. Almost every
-  such failure is gone by the next tick, so an email about it was noise.
-  Every install attempt is bounded, so a run also finishes before the next
-  dispatch would cancel it. Whether a frame has actually stopped updating is
-  decided in one place: `/health`, polled by the watchdog.
+  such failure is gone by the next tick, so an email about it was noise: in
+  the week of 2026-11-14 that was 3 failed and 25 cancelled runs, every one
+  transient (the mirror, and once a Netlify 503). Every install attempt is
+  bounded (3 x 70s for Chromium's packages, 2 x 60s for ImageMagick), so a
+  run finishes before the next dispatch would cancel it, and a tick the
+  mirror cannot serve is simply skipped. Whether a frame has actually
+  stopped updating is decided in one place: `/health`, polled by the
+  watchdog. To see what the publisher has been warning about, open a run in
+  the Actions tab; the warnings are listed at the top of its summary.
 - **`watchdog.yml` is the alarm.** Hourly, it asks the site's `/health`
   whether each frame was published on schedule and has current weather, and
   fails if not -- a failed run is what emails. It is the only `schedule:`
