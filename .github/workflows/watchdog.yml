@@ -1,17 +1,27 @@
 name: Watchdog
 
-# The publisher (screenshot.yml) only emails when one of its own runs fails.
-# It says nothing when it stops being dispatched, when every run is cancelled
-# by the next, or when the frames are running on old weather -- the failures
-# that actually leave a frame wrong for hours.
+# This is the only workflow here that emails. The publisher (screenshot.yml)
+# reports its own failures as warnings, because nearly all of them are gone by
+# the next tick. It also cannot report on itself when it is not running: when
+# it stops being dispatched, when every run is cancelled by the next, or when
+# the frames are running on old weather -- the failures that actually leave a
+# frame wrong for hours.
 #
 # This asks the site instead: /health answers 200 when every frame was
 # published on schedule from current weather data, and 503 with the reason
-# when one was not. A non-200 fails the run, and a failed run is what emails.
+# when one was not (a frame more than an hour behind, or two hours on last
+# known weather; wetterstation/netlify/functions/health.js has the rules).
+# A non-200 fails the run, and a failed run is what emails -- once an hour
+# for as long as the problem lasts.
+#
+# It is dispatched on the :20 tick by the same Netlify function that
+# dispatches the publisher, because GitHub's scheduler did not start it once
+# in its first two hours. The cron below stays as the backstop for when that
+# Netlify function is what has stopped.
 #
 # `schedule:` here, unlike the publisher. GitHub's cron is best-effort and can
-# run late or skip, which is fatal for publishing every 5 minutes and harmless
-# for an hourly check.
+# run late or skip -- fatal for publishing every 5 minutes, acceptable for a
+# backstop that only matters when the dispatcher itself is down.
 #
 # GitHub disables scheduled workflows in a repository that has had no commits
 # for 60 days, and emails before it does. Re-enable it from the Actions tab.
